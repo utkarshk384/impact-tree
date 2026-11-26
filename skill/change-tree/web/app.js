@@ -623,7 +623,7 @@ function renderFile(preserveScroll = false) {
     </aside>
     <div class="diff-panel panel">
       <div class="diff-toolbar">
-        <span>Diff from previous version</span><span class="diff-range mono" title="${esc(comparison.description)}">${esc(range)}</span>
+        <span class="diff-range mono" title="${esc(comparison.description)}">${esc(range)}</span>
         <span class="spacer"></span>${editorControls}
         <div class="segmented" role="group" aria-label="Diff layout">
           <button type="button" data-action="unified" aria-pressed="${!editing && diffView === 'unified'}" ${editing ? 'disabled' : ''}>${icon('unified')} Unified</button>
