@@ -4,7 +4,7 @@
 const SHORTCUTS = [
   ['Anywhere', [
     ['?', 'Show these shortcuts'],
-    ['Ctrl K  ⌘ K', 'Open or close the compare picker. The open file stays open.'],
+    ['Ctrl K  ⌘ K', 'Open or close the command palette'],
     ['/', 'Open the compare picker'],
     ['1  /  2', 'Impact view / Directory view'],
     ['j  /  k', 'Focus the next / previous file in review order'],
@@ -34,6 +34,12 @@ const SHORTCUTS = [
     ['e', 'Edit the file (working tree only)'],
     ['Ctrl S', 'Save the edit'],
     ['b  or  Esc', 'Back to the tree'],
+  ]],
+  ['Command palette', [
+    ['↑  /  ↓', 'Move through the results'],
+    ['Enter', 'Run the selected result'],
+    ['>  @  :', 'Search actions, find change blocks, or go to a line'],
+    ['Esc', 'Close the palette and restore focus'],
   ]],
   ['Compare picker', [
     ['↓  /  ↑', 'Move through the results'],
@@ -326,24 +332,21 @@ function globalKeys(event) {
 }
 
 document.addEventListener('keydown', (event) => {
-  if (busy || event.defaultPrevented) return;
+  if (event.defaultPrevented) return;
+  // Handle the palette before the other panels, including when an input has focus.
+  if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'k') {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (!event.repeat) toggleCommandPalette();
+    return;
+  }
+  if (commandPaletteKeys(event) || busy) return;
   if (!help.hidden) {
     if (event.key === 'Escape' || event.key === '?') {
       event.preventDefault();
       event.stopImmediatePropagation();
       closeHelp();
     } else if (event.key === 'Tab') trapTab(event, help);
-    return;
-  }
-  // Ctrl K / Cmd K works everywhere, even while typing: it opens the picker, or closes it.
-  if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'k') {
-    event.preventDefault();
-    if (draft) closePicker();
-    else {
-      // Keep the file view open. The picker opens on top of it.
-      pickerReturn = document.activeElement;
-      openPicker();
-    }
     return;
   }
   if (event.key === 'Escape') return; // app.js closes the picker or the file view.

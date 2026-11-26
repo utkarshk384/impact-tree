@@ -22,6 +22,7 @@ ASSETS = {"/": ("index.html", "text/html"), "/styles.css": ("styles.css", "text/
           "/app.js": ("app.js", "text/javascript"), "/tree.js": ("tree.js", "text/javascript"),
           "/keys.js": ("keys.js", "text/javascript"),
           "/settings.js": ("settings.js", "text/javascript"),
+          "/palette.js": ("palette.js", "text/javascript"),
           "/review.js": ("review.js", "text/javascript")}
 MAX_REQUEST = 6_000_000
 MAX_EXPAND_LINES = 20_000
