@@ -348,6 +348,7 @@ CARD_WIDTH, CARD_HEIGHT = 224, 96
 TRUNK_X, FIRST_ROW_Y = 196, 150
 COLUMN_STEP = CARD_WIDTH + 120
 SIBLING_GAP, SUBTREE_GAP = 24, 48
+GRID_GAP, MAX_GRID_ROWS = 32, 8
 SCRIPT_EXTENSION = re.compile(r"\.(?:[cm]?[jt]sx?)$")
 
 
@@ -384,42 +385,82 @@ def card_labels(paths):
     return names
 
 
-def tidy_positions(columns, children):
-    """Pack the main-parent forest into disjoint vertical bands from the leaves up."""
+def tidy_positions(columns, children, leaf_rows=MAX_GRID_ROWS, trunk_rows=MAX_GRID_ROWS):
+    """Pack sibling subtrees vertically and dense groups of leaves into grids."""
     heights = {}
     offsets = {}
+    lanes = defaultdict(lambda: 1)
 
-    def pack(siblings, gap_for):
+    def pack(parent):
+        siblings = children.get(parent, ())
+        leaves = [path for path in siblings if not children.get(path)]
+        if len(leaves) > MAX_GRID_ROWS:
+            siblings = [path for path in siblings if children.get(path)]
+        else:
+            leaves = []
+
         top = 0
-        result = []
+        branch = []
         for index, path in enumerate(siblings):
             if index:
-                top += gap_for(siblings[index - 1], path)
-            result.append((path, top))
+                previous = siblings[index - 1]
+                top += SUBTREE_GAP if children.get(previous) or children.get(path) else SIBLING_GAP
+            branch.append((path, top, None))
             top += heights[path]
-        return result, top
 
-    def sibling_gap(left, right):
-        return SUBTREE_GAP if children.get(left) or children.get(right) else SIBLING_GAP
+        if leaves:
+            top += SUBTREE_GAP if branch else 0
+            by_column = defaultdict(list)
+            for path in leaves:
+                by_column[columns[path]].append(path)
+            grid_height = 0
+            for column, paths in by_column.items():
+                if parent is None:
+                    rows = trunk_rows
+                else:
+                    balanced_rows = math.ceil(len(paths) / math.ceil(math.sqrt(len(paths))))
+                    rows = min(MAX_GRID_ROWS, max(leaf_rows, balanced_rows))
+                grid_height = max(grid_height, min(rows, len(paths)))
+                for index, path in enumerate(paths):
+                    lane, row = divmod(index, rows)
+                    # The trunk's leaf grid occupies its own rows below the
+                    # branches, so it can use their horizontal space there.
+                    if parent is not None:
+                        lanes[column] = max(lanes[column], lane + 1)
+                    branch.append((path, top + row * (CARD_HEIGHT + SIBLING_GAP), lane))
+            top += grid_height * (CARD_HEIGHT + SIBLING_GAP) - SIBLING_GAP
+        return branch, top
 
     for path in sorted(columns, key=columns.get, reverse=True):
-        branch, span = pack(children.get(path, ()), sibling_gap)
+        branch, span = pack(path)
         heights[path] = max(CARD_HEIGHT, span)
         offsets[path] = branch
 
-    forest, span = pack(children.get(None, ()), sibling_gap)
+    forest, span = pack(None)
+    column_x = []
+    x = TRUNK_X
+    for column in range(max(columns.values(), default=-1) + 1):
+        column_x.append(x)
+        x += COLUMN_STEP + (lanes[column] - 1) * (CARD_WIDTH + GRID_GAP)
+
+    wrapped_trunk = [top for _, top, lane in forest if lane is not None]
+    first_y = FIRST_ROW_Y + (20 if wrapped_trunk or any(count > 1 for count in lanes.values()) else 0)
     positions = {}
-    pending = [(path, FIRST_ROW_Y + top) for path, top in reversed(forest)]
+    pending = [(path, first_y + top, lane) for path, top, lane in reversed(forest)]
     while pending:
-        path, top = pending.pop()
+        path, top, lane = pending.pop()
         column = columns[path]
         height = heights[path]
         positions[path] = {
-            "column": column, "x": TRUNK_X + column * COLUMN_STEP,
+            "column": column, "x": column_x[column] + (lane or 0) * (CARD_WIDTH + GRID_GAP),
             "y": top + (height - CARD_HEIGHT) // 2, "band": [top, top + height],
         }
-        pending.extend((child, top + offset) for child, offset in reversed(offsets[path]))
-    return positions, span
+        if lane is not None:
+            positions[path]["gridLane"] = lane
+        pending.extend((child, top + offset, child_lane)
+                       for child, offset, child_lane in reversed(offsets[path]))
+    branch_bottom = first_y + (min(wrapped_trunk) - SIBLING_GAP if wrapped_trunk else span)
+    return positions, column_x, first_y, span, branch_bottom
 
 
 def place_tree(files, edges, dropped_imports=None):
@@ -469,25 +510,40 @@ def place_tree(files, edges, dropped_imports=None):
             placement_columns[path] = columns[representatives[path]]
             children[parent].append(path)
 
-    positions, tree_height = tidy_positions(placement_columns, children)
-    column_count = max(placement_columns.values(), default=-1) + 1
-    grid_width = max(1, column_count)
-    standalone_y = FIRST_ROW_Y + tree_height + (72 if tree_height else 0)
-    for index, path in enumerate(standalone):
-        row, col = divmod(index, grid_width)
-        positions[path] = {"column": None, "x": TRUNK_X + col * COLUMN_STEP,
-                           "y": standalone_y + row * (CARD_HEIGHT + SIBLING_GAP)}
+    dense_groups = [parent for parent, paths in children.items()
+                    if sum(not children.get(path) for path in paths) > MAX_GRID_ROWS]
+    row_options = range(2, MAX_GRID_ROWS + 1)
 
-    root_y = FIRST_ROW_Y + (max(CARD_HEIGHT, tree_height) - 84) // 2
-    bottom = max((position["y"] + CARD_HEIGHT for position in positions.values()), default=FIRST_ROW_Y)
-    return {
-        "positions": positions, "columns": column_count,
-        "trunkX": TRUNK_X, "columnStep": COLUMN_STEP, "cardWidth": CARD_WIDTH, "cardHeight": CARD_HEIGHT,
-        "root": {"x": 24, "y": root_y}, "treeBottom": FIRST_ROW_Y + tree_height,
-        "standaloneTop": standalone_y - 24 if standalone else None,
-        "width": TRUNK_X + (grid_width - 1) * COLUMN_STEP + CARD_WIDTH + 24,
-        "height": max(bottom + 24, root_y + 244),
-    }
+    def build_layout(leaf_rows, trunk_rows):
+        positions, column_x, first_y, tree_height, branch_bottom = tidy_positions(
+            placement_columns, children, leaf_rows, trunk_rows
+        )
+        grid_width = max(1, len(column_x))
+        tree_bottom = first_y + tree_height
+        standalone_y = tree_bottom + (72 if tree_height else 0)
+        for index, path in enumerate(standalone):
+            row, col = divmod(index, grid_width)
+            positions[path] = {"column": None, "x": TRUNK_X + col * COLUMN_STEP,
+                               "y": standalone_y + row * (CARD_HEIGHT + SIBLING_GAP)}
+
+        root_y = first_y + (max(CARD_HEIGHT, tree_height) - 84) // 2
+        bottom = max((position["y"] + CARD_HEIGHT for position in positions.values()), default=first_y)
+        return {
+            "positions": positions, "columns": len(column_x), "columnX": column_x,
+            "trunkX": TRUNK_X, "columnStep": COLUMN_STEP, "cardWidth": CARD_WIDTH, "cardHeight": CARD_HEIGHT,
+            "root": {"x": 24, "y": root_y}, "treeBottom": tree_bottom, "branchBottom": branch_bottom,
+            "standaloneTop": standalone_y - 24 if standalone else None,
+            "width": max((position["x"] + CARD_WIDTH for position in positions.values()),
+                         default=TRUNK_X + CARD_WIDTH) + 24,
+            "height": max(bottom + 24, root_y + 244),
+        }
+
+    leaf_options = row_options if any(parent is not None for parent in dense_groups) else (MAX_GRID_ROWS,)
+    trunk_options = row_options if None in dense_groups else (MAX_GRID_ROWS,)
+    # Favor the layout that fits largest in a typical desktop canvas.
+    layouts = (build_layout(leaf_rows, trunk_rows)
+               for leaf_rows in leaf_options for trunk_rows in trunk_options)
+    return max(layouts, key=lambda layout: min(1000 / layout["width"], 900 / layout["height"]))
 
 
 def analyze(root, comp, graph, files):

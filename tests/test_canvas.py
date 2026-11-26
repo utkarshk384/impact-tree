@@ -32,15 +32,35 @@ class CanvasLayoutTest(unittest.TestCase):
         children = defaultdict(list)
         for file in self.files:
             if file["parent"] is not None:
-                children[file["parent"]].append(self.positions[file["path"]]["band"])
+                children[file["parent"]].append(self.positions[file["path"]])
         self.assertEqual(max(map(len, children.values())), 15)
-        for parent, bands in children.items():
+        for parent, positions in children.items():
             position = self.positions[parent]
             top, bottom = position["band"]
-            self.assertTrue(all(top <= a < b <= bottom for a, b in bands))
+            by_x = defaultdict(list)
+            for child in positions:
+                start, end = child["band"]
+                self.assertLess(position["x"], child["x"])
+                self.assertTrue(top <= start < end <= bottom)
+                by_x[child["x"]].append(child["band"])
             self.assertEqual(position["y"] + self.layout["cardHeight"] / 2, (top + bottom) / 2)
-            for first, second in zip(sorted(bands), sorted(bands)[1:]):
-                self.assertGreaterEqual(second[0] - first[1], 24)
+            for bands in by_x.values():
+                ordered = sorted(bands)
+                for first, second in zip(ordered, ordered[1:]):
+                    self.assertGreaterEqual(second[0] - first[1], 24)
+
+    def test_dense_leaf_groups_and_childless_trunk_files_wrap(self):
+        hub = "features/feature-0/shared.ts"
+        children = [self.positions[file["path"]] for file in self.files if file["parent"] == hub]
+        trunk_leaves = [position for position in self.positions.values()
+                        if position["column"] == 0 and "gridLane" in position]
+        self.assertEqual(len(trunk_leaves), 42)
+        self.assertTrue(all(position["y"] > self.layout["branchBottom"] for position in trunk_leaves))
+        self.assertEqual(len(children), 15)
+        for positions in (children, trunk_leaves):
+            self.assertGreater(len({position["x"] for position in positions}), 1)
+            self.assertLessEqual(len({position["y"] for position in positions}), 8)
+            self.assertTrue(all("gridLane" in position for position in positions))
 
     def test_standalone_cards_fill_a_grid_below_the_tree(self):
         standalone = [self.positions[file["path"]] for file in self.files if file["standalone"]]
@@ -59,6 +79,8 @@ class CanvasLayoutTest(unittest.TestCase):
         self.assertEqual(names["api/teams/route.ts"], "teams/route.ts")
         self.assertEqual(names["pages/search.tsx"], "search.tsx")
         self.assertEqual(names["utilities/helper-00.ts"], "helper-00")
+        self.assertEqual(names["features/feature-0/shared.ts"], "feature-0/shared.ts")
+        self.assertEqual(names["features/feature-0/views/view-05.ts"], "feature-0/views/view-05.ts")
         self.assertEqual(len(set(names.values())), len(names))
         self.assertEqual(impact.card_labels(["route.ts", "x/route.ts", "y/x/route.ts"]),
                          {"route.ts": "./route.ts", "x/route.ts": "x/route.ts",

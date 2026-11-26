@@ -135,7 +135,7 @@ b { font-weight: 600; }
 .tree-ports { z-index: 2; }
 .card-name, .card-stats, .card-impact { display: flex; align-items: center; width: 100%; gap: 8px; }
 .card-name { font-weight: 600; }
-.card-filename { min-width: 0; overflow-wrap: anywhere; line-height: 15px; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.card-filename { min-width: 0; direction: rtl; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card-stats, .card-impact { padding-left: 26px; }
 .card-stats { justify-content: space-between; color: var(--muted); white-space: nowrap; font: 400 11px var(--mono); }
 .card-impact { gap: 10px; }
@@ -239,6 +239,7 @@ b { font-weight: 600; }
 .file-editor-label { min-height: 40px; padding: 0 12px; border-radius: 999px; background: #1d3328; color: #c9f0da; }
 .file-editor-label::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
 .diff-toolbar .pill { min-height: 40px; padding: 0 14px; color: var(--text); }
+.diff-toolbar .file-nav { max-width: 100%; min-width: 0; }
 .diff-toolbar .primary { color: #0f0f0f; }
 .diff-toolbar .edit-button { background: #1d3328; color: #c9f0da; }
 .diff-toolbar .segmented { background: #1f1f1f; color: var(--text); }

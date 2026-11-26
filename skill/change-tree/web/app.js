@@ -45,7 +45,6 @@ const icon = (name, size = 14) =>
 const glyph = (file) => `<span class="chip chip-letter status-${file.status}" aria-label="${statusWords[file.status]}">${file.status}</span>`;
 const counts = (file) => `<span class="add">+${file.added}</span> <span class="del">−${file.removed}</span>`;
 const blockName = (count) => `${count} ${count === 1 ? 'block' : 'blocks'}`;
-const shortName = (file) => file.name.replace(/\.(?:[cm]?[jt]sx?)$/, '');
 const band = (score) => score >= 66 ? 'high' : score >= 33 ? 'medium' : 'low';
 const bar = (score) => `<span class="impact-bar" aria-hidden="true"><span style="width:${score}%"></span></span><span class="impact-number" aria-label="Impact ${score}">${score}</span>`;
 const selectedFile = () => state.files.find((file) => file.path === selected);
@@ -135,8 +134,8 @@ function drawTree() {
   let labels = '';
   for (let col = 0; col < map.columns; col++) {
     const last = col === map.columns - 1;
-    const x = map.trunkX + map.columnStep * col;
-    if (col > 0) dividers += pathElement(`M${x - 60} 146 V${map.treeBottom}`);
+    const x = map.columnX[col];
+    if (col > 0) dividers += pathElement(`M${x - 60} 146 V${map.branchBottom}`);
     const label = col === 0 ? (last ? 'TRUNK' : 'TRUNK · most depended on') :
       last ? 'LEAVES · least depended on' : col === 1 ? 'BRANCHES' : '';
     if (label) {
@@ -158,8 +157,9 @@ function drawTree() {
     const pos = map.positions[file.path];
     const name = file.cardName;
     return `<button type="button" class="tree-card ${file.band}" style="transform:translate(${pos.x}px,${pos.y - TREE_TOP}px)"
-      data-action="file" data-path="${esc(file.path)}" aria-pressed="${selected === file.path}" title="${esc(file.path)}">
-      <span class="card-name">${glyph(file)}<span class="card-filename">${esc(name)}</span></span>
+      data-action="file" data-path="${esc(file.path)}" aria-pressed="${selected === file.path}"
+      title="${esc(file.path)}" aria-label="${esc(file.path)}">
+      <span class="card-name">${glyph(file)}<span class="card-filename"><bdi>${esc(name)}</bdi></span></span>
       <span class="card-stats"><span>${counts(file)}</span><span>${blockName(file.hunks.length)}</span></span>
       <span class="card-impact">${bar(file.score)}</span>
     </button>`;
@@ -292,7 +292,7 @@ function renderOverview() {
     ${saveMessage && !selected ? `<div class="diff-feedback" role="status">${esc(saveMessage)}</div>` : ''}
     ${state.files.length ? `<div class="muted">Review in this order</div><div class="review">${state.files.slice(0, 4).map((file) =>
       `<button type="button" data-action="file" data-path="${esc(file.path)}"><span class="review-score">${file.score}</span>
-      <span class="review-detail"><strong>${esc(file.name)}</strong><span>${esc(file.why)}</span></span></button>`).join('')}</div>` : ''}
+      <span class="review-detail"><strong title="${esc(file.path)}">${esc(file.cardName)}</strong><span>${esc(file.why)}</span></span></button>`).join('')}</div>` : ''}
   </div>`;
   if (previous) overview.firstElementChild.scrollTop = previous.scrollTop;
   overview.inert = Boolean(selected);
@@ -402,6 +402,7 @@ function renderFile(preserveScroll = false) {
   }
   const index = state.files.indexOf(file);
   const nextFile = state.files[(index + 1) % state.files.length];
+  const previousFile = state.files[(index + state.files.length - 1) % state.files.length];
   const comparison = state.comparison;
   const range = `${comparison.base === 'HEAD' ? 'HEAD' : comparison.baseLabel} → ${comparison.headLabel.toLowerCase() === 'working tree' ? 'working tree' : comparison.headLabel}`;
   const usedBy = file.usedBy.map((path) => path.split('/').pop()).join(', ');
@@ -442,9 +443,10 @@ function renderFile(preserveScroll = false) {
           <button type="button" data-action="unified" aria-pressed="${!editing && diffView === 'unified'}" ${editing ? 'disabled' : ''}>${icon('unified')} Unified</button>
           <button type="button" data-action="split" aria-pressed="${!editing && diffView === 'split'}" ${editing ? 'disabled' : ''}>${icon('split')} Side by side</button>
         </div>
-        <button type="button" class="pill surface" data-action="previous" ${nextFile === file || editing ? 'disabled' : ''}>Previous file</button>
-        <button type="button" class="pill surface" data-action="next" ${nextFile === file || editing ? 'disabled' : ''} title="${esc(nextFile.name)}">
-          Next file · ${esc(shortName(nextFile))}</button>
+        <button type="button" class="pill surface file-nav" data-action="previous" ${previousFile === file || editing ? 'disabled' : ''}
+          title="${esc(previousFile.path)}"><span class="ellipsis">Previous file · ${esc(previousFile.cardName)}</span></button>
+        <button type="button" class="pill surface file-nav" data-action="next" ${nextFile === file || editing ? 'disabled' : ''}
+          title="${esc(nextFile.path)}"><span class="ellipsis">Next file · ${esc(nextFile.cardName)}</span></button>
         <span id="save-feedback" class="diff-feedback ${saveFailed ? 'error' : ''}" role="status" ${saveMessage ? '' : 'hidden'}>${esc(saveMessage)}</span>
       </div>
       <div class="diff-scroll" tabindex="0" aria-label="Git diff">

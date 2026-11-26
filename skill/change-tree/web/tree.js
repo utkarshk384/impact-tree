@@ -63,6 +63,39 @@ function bus(source, children, gap) {
   return paths.join(' ');
 }
 
+function gridBus(source, children, gap, cardHeight) {
+  const direct = [];
+  const tracks = new Map();
+  for (const child of children) {
+    if (child.track === undefined) direct.push(child);
+    else {
+      if (!tracks.has(child.track)) tracks.set(child.track, []);
+      tracks.get(child.track).push(child);
+    }
+  }
+  if (tracks.size < 2) return bus(source, children, gap);
+
+  // Feed the wrapped tracks across the top so links to a later subcolumn
+  // remain visible instead of passing underneath an earlier card.
+  const [first, ...others] = [...tracks.keys()].sort((a, b) => a - b);
+  const firstTrack = tracks.get(first);
+  direct.push(...firstTrack);
+  const railY = Math.min(...[...tracks.values()].flat().map((child) => child.y)) - cardHeight / 2 - 12;
+  const railX = Math.min(...firstTrack.map((child) => child.x)) - 16;
+  direct.push({x: railX, y: railY});
+
+  const feeds = others.map((track) => {
+    const targets = tracks.get(track);
+    const x = Math.min(...targets.map((child) => child.x)) - 16;
+    const bottom = Math.max(...targets.map((child) => child.y));
+    const stubs = targets.map((child) => `M${x} ${child.y} H${child.x}`).join(' ');
+    return {x, path: `M${x} ${railY} V${bottom} ${stubs}`};
+  });
+  const right = Math.max(railX, ...feeds.map((feed) => feed.x));
+  const left = Math.min(railX, ...feeds.map((feed) => feed.x));
+  return [bus(source, direct, gap), `M${left} ${railY} H${right}`, ...feeds.map((feed) => feed.path)].join(' ');
+}
+
 class TreeCanvas {
   constructor(viewport, layout, files, storageKey, savedView) {
     this.viewport = viewport;
@@ -211,10 +244,12 @@ class TreeCanvas {
     };
     const targets = route.children.map((path) => {
       const position = this.positions.get(path);
-      return {x: position.x, y: position.y + this.layout.cardHeight / 2};
+      const origin = this.defaults.get(path);
+      return {x: position.x, y: position.y + this.layout.cardHeight / 2,
+        track: origin.gridLane === undefined ? undefined : origin.x};
     });
     const gap = root ? this.layout.trunkX - source.right : this.layout.columnStep - this.layout.cardWidth;
-    if (route.bus) return bus(source, targets, gap);
+    if (route.bus) return gridBus(source, targets, gap, this.layout.cardHeight);
     return targets.map((target) => curve(source, target, gap, route.offset, route.extra)).join(' ');
   }
 
