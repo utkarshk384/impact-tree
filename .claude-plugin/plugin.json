@@ -7,12 +7,12 @@
     "name": "Utkarsh Kumar",
     "url": "https://github.com/utkarshk384"
   },
-  "homepage": "https://github.com/utkarshk384/impact-tree",
-  "repository": "https://github.com/utkarshk384/impact-tree",
+  "homepage": "https://github.com/utkarshk384/impact-tree-public",
+  "repository": "https://github.com/utkarshk384/impact-tree-public",
   "license": "MIT",
   "keywords": ["git", "code-review", "diff", "dependencies"],
   "skills": "./skill/",
   "icon": "./docs/logo.svg",
-  "documentationUrl": "https://github.com/utkarshk384/impact-tree#readme",
-  "supportUrl": "https://github.com/utkarshk384/impact-tree/issues"
+  "documentationUrl": "https://github.com/utkarshk384/impact-tree-public#readme",
+  "supportUrl": "https://github.com/utkarshk384/impact-tree-public/issues"
 }

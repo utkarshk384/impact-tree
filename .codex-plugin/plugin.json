@@ -6,8 +6,8 @@
     "name": "Utkarsh Kumar",
     "url": "https://github.com/utkarshk384"
   },
-  "homepage": "https://github.com/utkarshk384/impact-tree",
-  "repository": "https://github.com/utkarshk384/impact-tree",
+  "homepage": "https://github.com/utkarshk384/impact-tree-public",
+  "repository": "https://github.com/utkarshk384/impact-tree-public",
   "license": "MIT",
   "keywords": ["git", "code-review", "diff", "dependencies"],
   "skills": "./skill/",
@@ -19,8 +19,8 @@
     "developerName": "Utkarsh Kumar",
     "category": "Developer Tools",
     "capabilities": ["Review Git diffs", "Trace file dependencies", "Summarize changes"],
-    "websiteURL": "https://github.com/utkarshk384/impact-tree",
-    "supportURL": "https://github.com/utkarshk384/impact-tree/issues",
+    "websiteURL": "https://github.com/utkarshk384/impact-tree-public",
+    "supportURL": "https://github.com/utkarshk384/impact-tree-public/issues",
     "defaultPrompt": [
       "Open Impact Tree for my working tree.",
       "Open Impact Tree to compare my branch with main."

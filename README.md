@@ -63,14 +63,14 @@ Use the same arguments when you invoke the skill in Codex or run the standalone 
 In Codex, run both commands and start a new session.
 
 ```sh
-codex plugin marketplace add utkarshk384/impact-tree
+codex plugin marketplace add utkarshk384/impact-tree-public
 codex plugin add impact-tree@impact-tree
 ```
 
 In Claude Code, install the plugin from the marketplace.
 
 ```text
-/plugin install impact-tree --marketplace utkarshk384/impact-tree
+/plugin install impact-tree --marketplace utkarshk384/impact-tree-public
 ```
 
 ### Install the standalone skill
@@ -78,7 +78,7 @@ In Claude Code, install the plugin from the marketplace.
 Clone the repository.
 
 ```sh
-git clone https://github.com/utkarshk384/impact-tree.git
+git clone https://github.com/utkarshk384/impact-tree-public.git
 cd impact-tree
 ```
 
