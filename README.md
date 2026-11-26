@@ -14,6 +14,8 @@ You need Python 3.9+, Git and Graphify on PATH. GitHub CLI with an active login 
 
 `./install.sh` defaults to Claude Code. Both installations link to the same skill files.
 
+The installer also adds a short, marked block to the agent's global instructions: `~/.claude/CLAUDE.md` for Claude Code and `~/.codex/AGENTS.md` (or `$CODEX_HOME/AGENTS.md`) for Codex. The block tells the agent to run the Change Tree server and the summary and chat sub-agents inside its own harness, with background commands and native sub-agents, and not with hc, tmux or new terminal tabs. It overrides more general sub-agent rules for this skill only. A second run replaces the block and keeps the rest of the file. Use `--no-instructions` to skip it.
+
 ## Use
 
 Invoke the skill in the repository you want to review. Use the same arguments with either invocation.
