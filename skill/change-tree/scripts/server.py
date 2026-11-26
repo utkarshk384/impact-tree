@@ -1,4 +1,5 @@
 """Threaded localhost app, comparison state, and authenticated write endpoints."""
+from contextlib import nullcontext
 import hashlib
 import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -23,7 +24,7 @@ ASSETS = {"/": ("index.html", "text/html"), "/styles.css": ("styles.css", "text/
           "/keys.js": ("keys.js", "text/javascript"),
           "/settings.js": ("settings.js", "text/javascript"),
           "/palette.js": ("palette.js", "text/javascript"),
-          "/review.js": ("review.js", "text/javascript")}
+          "/review.js": ("review.js", "text/javascript"), "/chat.js": ("chat.js", "text/javascript")}
 MAX_REQUEST = 6_000_000
 MAX_EXPAND_LINES = 20_000
 
@@ -194,7 +195,7 @@ class State:
         self.sequence = 0
         self.result = {"repo": root.name, "comparison": {}, "files": [], "layout": {}, "error": None,
                        "refs": {}, "snapshot": None, "loading": True, "summaries": {},
-                       "summaryStatus": "idle"}
+                       "summaryStatus": "idle", "chat": [], "chatStatus": "idle"}
         self.jobs = job_factory(self) if job_factory else None
 
     def initialize(self, base, head, task):
@@ -229,7 +230,7 @@ class State:
     def events(self, sequence):
         with self.changed:
             changed = self.changed.wait_for(lambda: self.sequence != sequence, timeout=15)
-            selected = ("snapshot", "summaries", "summaryStatus", "summaryError", "refsReady")
+            selected = ("snapshot", "summaries", "summaryStatus", "summaryError", "refsReady", "chat", "chatStatus")
             event = {key: self.result.get(key) for key in selected}
             event["settings"] = self.settings
             return self.sequence, event if changed else None
@@ -240,23 +241,34 @@ class State:
     def publish(self, result, previous=None, edited_path=None):
         snapshot = hashlib.sha256(json_bytes(result)).hexdigest()
         path = self.comparison_path(snapshot)
-        cached = read_json(path, {}) if not result["error"] else {}
-        summaries = current_summaries(cached.get("summaries", {}))
-        if previous and previous["snapshot"] != snapshot:
-            retained = {file["path"] for file in result["files"] if file["path"] != edited_path}
-            saved = current_summaries(previous["summaries"]).get("files", {})
-            summaries = {**summaries, "files": {**{path: value for path, value in saved.items() if path in retained},
-                                               **summaries.get("files", {})}}
-        if not result["error"]:
-            cache_json(path, {"analysis": result, "summaries": summaries})
+        with self.jobs.condition if self.jobs else nullcontext():
+            cached = read_json(path, {}) if not result["error"] else {}
+            summaries = current_summaries(cached.get("summaries", {}))
+            if previous and previous["snapshot"] != snapshot:
+                retained = {file["path"] for file in result["files"] if file["path"] != edited_path}
+                saved = current_summaries(previous["summaries"]).get("files", {})
+                summaries = {**summaries, "files": {**{path: value for path, value in saved.items() if path in retained},
+                                                   **summaries.get("files", {})}}
+            chat = {"chat": [], "chatStatus": "idle"}
+            if not result["error"]:
+                cache_json(path, {"analysis": result, "summaries": summaries})
+                if self.jobs:
+                    chat = self.jobs.open_chat(snapshot)
+            with self.changed:
+                self.result = {**result, **chat, "refs": self.result["refs"],
+                               "refsReady": self.result.get("refsReady", False), "snapshot": snapshot,
+                               "loading": False, "summaries": summaries,
+                               "summaryStatus": "pending" if result["files"] else "idle"}
+                self.notify()
+            if self.jobs:
+                self.jobs.enqueue(snapshot, result, summaries)
+            return self.get()
+
+    def update_chat(self, snapshot, chat):
         with self.changed:
-            self.result = {**result, "refs": self.result["refs"], "refsReady": self.result.get("refsReady", False),
-                           "snapshot": snapshot, "loading": False, "summaries": summaries,
-                           "summaryStatus": "pending" if result["files"] else "idle"}
-            self.notify()
-        if self.jobs:
-            self.jobs.enqueue(snapshot, result, summaries)
-        return self.get()
+            if self.result["snapshot"] == snapshot:
+                self.result = {**self.result, **chat}
+                self.notify()
 
     def summarize(self, snapshot, result, status, error=None):
         path = self.comparison_path(snapshot)
@@ -468,6 +480,12 @@ class Handler(BaseHTTPRequestHandler):
                 self.json(200, state.update_settings(self.body()))
             elif path == "/api/lines":
                 self.json(200, state.lines(self.body()))
+            elif path == "/api/chat" and state.jobs:
+                self.json(200, state.jobs.change_chat(self.body(), "send"))
+            elif path == "/api/chat/clear" and state.jobs:
+                self.json(200, state.jobs.change_chat(self.body(), "clear"))
+            elif path == "/api/chat/retry" and state.jobs:
+                self.json(200, state.jobs.change_chat(self.body(), "retry"))
             elif path == "/api/jobs/claim" and state.jobs:
                 wait = self.body().get("wait", 0)
                 if not isinstance(wait, (int, float)) or isinstance(wait, bool):

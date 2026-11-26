@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from test_analysis import GitRepoMixin
 import ct
-from jobs import Jobs, submit, wait
+from jobs import Jobs, request, submit, wait
 from repo import ChangeTreeError
 from server import Server, State, read_json, write_json
 
@@ -87,6 +87,133 @@ class JobsFixture(GitRepoMixin, unittest.TestCase):
             self.assertIn(job["jobId"], printed.getvalue())
         else:
             submit(self.root, job["jobId"], result_path)
+
+    def chat(self, message, context=None, **body):
+        return request(self.root, "POST", "/api/chat", {"message": message, "context": context or {}, **body}, 4)
+
+    def test_chat_has_priority_and_a_slot_outside_the_summary_limit(self):
+        start = self.start_jobs()
+        path = start["files"][0]["path"]
+        context = {"path": path, "block": 0, "selectedText": "SETTING = 1"}
+        self.assertEqual(self.chat("What changed?", context)["chatStatus"], "pending")
+        self.chat("Why did it change?")
+
+        with patch("jobs.MAX_ACTIVE", 1):
+            first = self.next_job(cli=True)
+            self.assertEqual(first["kind"], "chat")
+            self.assertEqual(first["comparisonId"], start["snapshot"])
+            self.assertEqual(first["repo"], str(self.root))
+            self.assertEqual(first["comparison"]["base"], "HEAD")
+            self.assertEqual(first["comparison"]["head"], "WORKTREE")
+            self.assertEqual(first["comparison"]["task"], "Update defaults")
+            self.assertEqual(first["context"], context)
+            self.assertEqual([item["text"] for item in first["messages"]], ["What changed?"])
+            self.assertEqual(first["thread"], [])
+            self.assertEqual(len(first["files"]), 16)
+
+            summary = self.next_job()
+            self.assertEqual(summary["kind"], "files")
+            self.chat("What should I test?")
+            self.no_job()
+            self.done(first, {"reply": "The default changed."})
+            second = self.next_job()
+            self.assertEqual(second["kind"], "chat")
+            self.assertEqual([item["text"] for item in second["messages"]], ["Why did it change?", "What should I test?"])
+            self.assertEqual([item["text"] for item in second["thread"]], ["What changed?", "The default changed."])
+            self.no_job()
+            self.done(summary, file_result(summary))
+            self.done(second, {"reply": "Test callers that omit the setting."})
+            self.assertEqual(self.state.get()["chatStatus"], "idle")
+            self.assertEqual([item["role"] for item in self.state.get()["chat"]],
+                             ["user", "assistant", "user", "user", "assistant"])
+
+            summary = self.next_job()
+            self.chat("Which setting changed?")
+            third = self.next_job()
+            self.assertEqual(third["kind"], "chat")
+            evidence = next(item for item in third["files"] if item["path"] == path)
+            self.assertEqual(evidence["why"], "The task asks for new defaults.")
+
+    def test_chat_persists_per_comparison_and_finishes_after_switching(self):
+        original = self.start_jobs(files=1)
+        self.chat("Where is the setting?")
+        job = self.next_job()
+        self.chat("What uses it?")
+        different = self.compare(task="Other task")
+        self.assertNotEqual(different["snapshot"], original["snapshot"])
+        self.assertEqual(different["chat"], [])
+        with self.assertRaisesRegex(ChangeTreeError, "changed on disk"):
+            self.chat("Stale question", snapshot=original["snapshot"])
+        reply = {"reply": "Set in `setting00.py:1`; it is a constant.",
+                 "references": [{"path": "setting00.py", "line": 1}]}
+        self.done(job, reply, cli=True)
+        followup = self.next_job()
+        self.assertEqual(followup["comparisonId"], original["snapshot"])
+        self.assertEqual(followup["messages"][0]["text"], "What uses it?")
+        self.done(followup, {"reply": "Read the configuration module."})
+        self.assertEqual(self.state.get()["chat"], [])
+        reopened = self.compare()
+        self.assertEqual(reopened["chat"][1]["text"], reply["reply"])
+        self.assertEqual(reopened["chat"][1]["references"], reply["references"])
+
+        restored = State(self.root, ct.analyze, job_factory=Jobs, cache=self.cache)
+        self.addCleanup(restored.jobs.close)
+        result = restored.compare({"base": "HEAD", "head": "WORKTREE", "task": "Update defaults"})
+        self.assertEqual(result["chat"], reopened["chat"])
+        self.assertEqual(result["chatStatus"], "idle")
+
+    def test_chat_rejects_bad_context_and_replies(self):
+        self.start_jobs(files=1)
+        for context in ({"path": "../outside"}, {"path": "setting00.py", "block": True},
+                        {"block": 0}, {"selectedText": "x" * 2001}, {"selectedText": ["text"]}):
+            with self.subTest(context=context), self.assertRaises(ChangeTreeError):
+                self.chat("Question", context)
+        with self.assertRaisesRegex(ChangeTreeError, "Chat message"):
+            self.chat(" ")
+        self.assertEqual(self.state.get()["chat"], [])
+        self.chat("Question")
+        job = self.next_job()
+        for result in ({"reply": " "}, {"reply": ["bad"]}, {"reply": "x" * 16001},
+                       {"reply": "Answer", "references": None}, {"reply": "Answer", "extra": True},
+                       {"reply": "Answer", "references": [{}] * 11},
+                       {"reply": "Answer", "references": [{"path": "setting00.py", "line": True}]}):
+            with self.subTest(result=result), self.assertRaises(ChangeTreeError):
+                self.done(job, result)
+        (self.root / "outside").symlink_to(self.root.parent, target_is_directory=True)
+        (self.root / "git-alias").symlink_to(self.root / ".git", target_is_directory=True)
+        for path in ("../outside", "/tmp/outside", "C:\\outside", "outside/file.py", ".git/config", "git-alias/config"):
+            with self.subTest(path=path), self.assertRaisesRegex(ChangeTreeError, "inside the repository"):
+                self.done(job, {"reply": "Answer", "references": [{"path": path, "line": 1}]})
+        self.assertEqual(self.state.get()["chatStatus"], "pending")
+        self.done(job, {"reply": "Answer; no STE lint."})
+
+    def test_chat_expires_retries_and_clears(self):
+        original = self.start_jobs(files=1)
+        self.chat("What changed?")
+        with patch("jobs.CLAIM_TIMEOUT", 0.2):
+            expired = self.next_job()
+            with self.state.changed:
+                self.assertTrue(self.state.changed.wait_for(
+                    lambda: self.state.result["chatStatus"] == "failed", timeout=3))
+        state = self.state.get()
+        self.assertEqual(state["chat"][0]["status"], "failed")
+        self.assertFalse(self.state.jobs.job_path(expired["jobId"]).exists())
+        with self.assertRaisesRegex(ChangeTreeError, "no longer active"):
+            self.done(expired, {"reply": "Late answer."})
+
+        retry = request(self.root, "POST", "/api/chat/retry", {"id": state["chat"][0]["id"]}, 4)
+        self.assertEqual(retry["chatStatus"], "pending")
+        fresh = self.next_job()
+        self.assertEqual(fresh["messages"], expired["messages"])
+        self.chat("Do I need a new test?")
+        cleared = request(self.root, "POST", "/api/chat/clear", {}, 4)
+        self.assertEqual(cleared, {"chat": [], "chatStatus": "idle"})
+        self.assertEqual(read_json(self.state.jobs.chat_path(original["snapshot"]), None), [])
+        self.assertEqual(self.compare()["chat"], [])
+        with self.assertRaisesRegex(ChangeTreeError, "no longer active"):
+            self.done(fresh, {"reply": "Stale answer."})
+        self.chat("New thread.")
+        self.assertEqual([item["text"] for item in self.next_job()["messages"]], ["New thread."])
 
     def test_batches_stream_sequentially_and_cache_files_after_save(self):
         start = self.start_jobs()

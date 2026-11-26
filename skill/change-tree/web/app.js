@@ -775,6 +775,7 @@ function applyState(next, keepScroll = true) {
   renderOverview();
   renderFile(keepScroll);
   renderPicker();
+  if (typeof renderChat === 'function') renderChat();
 }
 
 async function submitComparison() {
@@ -1005,6 +1006,7 @@ function receiveUpdate(update) {
   state = {...state, ...update, refsReady: state.refsReady};
   renderOverview();
   refreshFileSummaries();
+  if (typeof renderChat === 'function') renderChat();
 }
 
 renderWorkspace();

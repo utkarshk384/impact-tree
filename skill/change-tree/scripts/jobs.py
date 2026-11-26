@@ -1,4 +1,4 @@
-"""Queue summary jobs for the agent that runs the skill, and validate the results.
+"""Queue jobs for the agent that runs the skill, and validate the results.
 
 The server does not start or message an agent. The agent that ran the skill claims
 jobs with `ct.py jobs wait`, gives each job to a sub-agent, and the sub-agent
@@ -12,12 +12,13 @@ import re
 import importlib.util
 import secrets
 import time
-from threading import Condition
+from threading import Condition, Timer
 from urllib.parse import urlsplit
 
-from edits import EditError
+from chat import MAX_MESSAGE, RECENT_MESSAGES, chat_text, page_context, validate_reply
+from edits import CHANGED, EditError
 from repo import ChangeTreeError
-from server import MAX_REQUEST, json_bytes, read_json, repo_cache, server_info, write_json
+from server import MAX_REQUEST, cache_json, json_bytes, read_json, repo_cache, server_info, write_json
 
 
 JOB_ID = re.compile(r"[a-f0-9]{32}")
@@ -27,6 +28,7 @@ MAX_ACTIVE = 3
 CLAIM_TIMEOUT = 20 * 60
 STE_LINT = Path(__file__).resolve().parents[1] / "vendor" / "asd-ste100" / "ste_lint.py"
 STE_IGNORED = {"synonym-rotation"}
+CHAT_PENDING = {"queued", "ready", "running"}
 _ste = None
 
 
@@ -57,6 +59,14 @@ class Active:
     plan: Plan
     kind: str
     files: list
+    claimed: float
+
+
+@dataclass
+class ChatClaim:
+    job_id: str
+    snapshot: str
+    messages: set
     claimed: float
 
 
@@ -181,10 +191,163 @@ class Jobs:
         self.condition = Condition()
         self.plan = None
         self.active = {}
+        self.chat_threads = {}
+        self.chat_pending = {}
+        self.chat_active = None
+        self.chat_timer = None
         self.closed = False
 
     def job_path(self, job_id):
         return self.directory / (job_id + ".json")
+
+    def chat_path(self, snapshot):
+        return self.state.comparison_path(snapshot).with_suffix(".chat.json")
+
+    def open_chat(self, snapshot):
+        """Load the thread under the queue lock when a comparison opens."""
+        if snapshot not in self.chat_threads:
+            thread = read_json(self.chat_path(snapshot), [])
+            if not isinstance(thread, list):
+                thread = []
+            # A worker from the previous server cannot submit to this queue.
+            restored = [{**item, "status": "failed"} if item.get("status") == "running" else item
+                        for item in thread]
+            restored = self.schedule_chat(restored)
+            if restored != thread:
+                cache_json(self.chat_path(snapshot), restored)
+            self.remember_chat(snapshot, restored)
+        return self.chat_view(self.chat_threads[snapshot])
+
+    @staticmethod
+    def chat_view(thread):
+        statuses = {item.get("status") for item in thread}
+        status = "pending" if statuses & CHAT_PENDING else "failed" if "failed" in statuses else "idle"
+        return {"chat": thread, "chatStatus": status}
+
+    @staticmethod
+    def schedule_chat(thread):
+        # Hold later messages for a fresh job once the scheduled reply finishes.
+        if any(item.get("status") in ("ready", "running") for item in thread):
+            return thread
+        return [{**item, "status": "ready"} if item.get("status") == "queued" else item for item in thread]
+
+    def remember_chat(self, snapshot, thread):
+        self.chat_threads[snapshot] = thread
+        if any(item.get("status") == "ready" for item in thread):
+            self.chat_pending.setdefault(snapshot, None)
+        else:
+            self.chat_pending.pop(snapshot, None)
+        self.condition.notify_all()
+
+    def store_chat(self, snapshot, thread, *, best_effort=False):
+        thread = self.schedule_chat(thread)
+        save = cache_json if best_effort else write_json
+        save(self.chat_path(snapshot), thread)
+        self.remember_chat(snapshot, thread)
+        result = self.chat_view(thread)
+        self.state.update_chat(snapshot, result)
+        return result
+
+    def change_chat(self, body, action):
+        with self.condition:
+            current = self.state.result
+            snapshot = current["snapshot"]
+            if self.closed or not snapshot or current["error"]:
+                raise EditError("Open a comparison to use chat.", 409)
+            if body.get("snapshot", snapshot) != snapshot:
+                raise EditError(CHANGED, 409)
+            thread = self.chat_threads[snapshot]
+            if action == "clear":
+                result = self.store_chat(snapshot, [])
+                active = self.chat_active
+                if active and active.snapshot == snapshot:
+                    self.release_chat()
+                return result
+            if action == "retry":
+                for index, item in enumerate(thread):
+                    if item["id"] == body.get("id") and item.get("status") == "failed":
+                        thread = [*thread[:index], {**item, "status": "queued"}, *thread[index + 1:]]
+                        break
+                else:
+                    raise EditError("This message is no longer available to retry.", 409)
+            else:
+                message = chat_text(body.get("message"), MAX_MESSAGE, "Chat message")
+                context = page_context(body.get("context", {}), current["files"])
+                thread = [*thread, {"id": secrets.token_hex(16), "role": "user", "text": message,
+                                    "context": context, "status": "queued"}]
+            if sum(item.get("status") == "queued" for item in thread) > RECENT_MESSAGES:
+                raise EditError("Wait for a reply before sending more messages.", 429)
+            return self.store_chat(snapshot, thread)
+
+    def claim_chat(self):
+        snapshot = next(iter(self.chat_pending))
+        thread = self.chat_threads[snapshot]
+        messages = [item for item in thread if item.get("status") == "ready"]
+        # The current comparison may have changed while this thread waited.
+        current = self.state.result
+        if current["snapshot"] != snapshot:
+            cached = read_json(self.state.comparison_path(snapshot), {})
+            if not isinstance(cached, dict) or "analysis" not in cached:
+                failed = [{**item, "status": "failed"} if item.get("status") in CHAT_PENDING else item
+                          for item in thread]
+                self.store_chat(snapshot, failed, best_effort=True)
+                return None
+            current = {**cached["analysis"], "summaries": cached.get("summaries", {})}
+        comparison = {key: current["comparison"][key] for key in
+                      ("base", "head", "baseCommit", "headCommit", "diffBase", "description", "task", "target")}
+        plan = Plan(snapshot, comparison, deque(), current["summaries"], current["files"])
+        job_id = secrets.token_hex(16)
+        path = self.job_path(job_id)
+        write_json(path, {
+            "jobId": job_id, "comparisonId": snapshot, "kind": "chat", "repo": str(self.state.root),
+            "comparison": comparison, "files": overview_context(plan),
+            "thread": [item for item in thread if item.get("status") not in CHAT_PENDING][-RECENT_MESSAGES:],
+            "messages": [{key: item[key] for key in ("id", "text", "context")} for item in messages],
+            "context": messages[-1]["context"],
+        })
+        try:
+            self.store_chat(snapshot, [{**item, "status": "running"} if item.get("status") == "ready" else item
+                                       for item in thread])
+        except OSError:
+            self.clean(job_id)
+            raise
+        ids = {item["id"] for item in messages}
+        active = self.chat_active = ChatClaim(job_id, snapshot, ids, time.monotonic())
+        self.chat_timer = Timer(CLAIM_TIMEOUT, self.timeout_chat, args=(active,))
+        self.chat_timer.daemon = True
+        self.chat_timer.start()
+        return self.job_response(job_id, "chat", 0, len(self.chat_pending))
+
+    def release_chat(self):
+        self.clean(self.chat_active.job_id)
+        self.chat_active = None
+        self.chat_timer.cancel()
+        self.chat_timer = None
+        self.condition.notify_all()
+
+    def timeout_chat(self, active):
+        with self.condition:
+            if self.chat_active is not active:
+                return
+            thread = self.chat_threads[active.snapshot]
+            failed = [{**item, "status": "failed"} if item["id"] in active.messages else item for item in thread]
+            self.store_chat(active.snapshot, failed, best_effort=True)
+            self.release_chat()
+
+    def finish_chat(self, active, value):
+        result = validate_reply(self.state.root, value)
+        thread = []
+        insert_at = 0
+        for item in self.chat_threads[active.snapshot]:
+            if item["id"] in active.messages:
+                item = {key: value for key, value in item.items() if key != "status"}
+                insert_at = len(thread) + 1
+            thread.append(item)
+        thread.insert(insert_at, {"id": active.job_id, "role": "assistant", "text": result["reply"],
+                                 "references": result["references"]})
+        self.store_chat(active.snapshot, thread)
+        self.release_chat()
+        return {"accepted": True}
 
     def enqueue(self, snapshot, result, summaries):
         with self.condition:
@@ -230,6 +393,8 @@ class Jobs:
     def expire(self):
         """Put jobs back in the queue when nobody submitted them in time."""
         now = time.monotonic()
+        if self.chat_active and now - self.chat_active.claimed >= CLAIM_TIMEOUT:
+            self.timeout_chat(self.chat_active)
         for job_id, item in list(self.active.items()):
             if now - item.claimed < CLAIM_TIMEOUT:
                 continue
@@ -253,6 +418,11 @@ class Jobs:
                 self.expire()
                 if self.closed:
                     return {"closed": True}
+                if self.chat_pending and not self.chat_active:
+                    chat = self.claim_chat()
+                    if chat:
+                        return chat
+                    continue
                 if self.ready():
                     break
                 remaining = deadline - time.monotonic()
@@ -267,13 +437,24 @@ class Jobs:
                 self.plan.pending.appendleft((kind, files))
                 raise EditError("The job could not be written to the Change Tree cache.", 500)
             self.active[active.job_id] = active
-            return {"job": {"id": active.job_id, "kind": kind, "path": str(self.job_path(active.job_id)),
-                            "files": len(files), "remaining": len(self.plan.pending),
-                            "model": self.state.settings["model"], "effort": self.state.settings["effort"]}}
+            return self.job_response(active.job_id, kind, len(files), len(self.plan.pending))
+
+    def job_response(self, job_id, kind, files, remaining):
+        return {"job": {"id": job_id, "kind": kind, "path": str(self.job_path(job_id)),
+                        "files": files, "remaining": remaining,
+                        "model": self.state.settings["model"], "effort": self.state.settings["effort"]}}
 
     def done(self, body):
         job_id = body.get("jobId")
+        if not isinstance(job_id, str):
+            raise EditError("This job is no longer active. Claim a new job.", 409)
         with self.condition:
+            chat = self.chat_active
+            if chat and job_id == chat.job_id:
+                if time.monotonic() - chat.claimed >= CLAIM_TIMEOUT:
+                    self.timeout_chat(chat)
+                else:
+                    return self.finish_chat(chat, body.get("result"))
             active = self.active.get(job_id)
             if not active:
                 raise EditError("This job is no longer active. Claim a new job.", 409)
@@ -294,6 +475,8 @@ class Jobs:
     def close(self):
         with self.condition:
             self.closed = True
+            if self.chat_active:
+                self.timeout_chat(self.chat_active)
             for job_id in list(self.active):
                 self.clean(job_id)
             self.active.clear()

@@ -11,6 +11,7 @@ const SHORTCUTS = [
     ['a', 'Show or hide all dependencies'],
     ['o', 'Go to the overview'],
     ['f', 'Fit the tree'],
+    ['c', 'Open change chat or focus its input'],
     ['Esc', 'Close the open panel'],
   ]],
   ['Impact tree', [
