@@ -1,7 +1,7 @@
 {
   "name": "impact-tree",
   "displayName": "Impact Tree",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Review Git changes in a local browser with dependency graphs, file diffs, AI summaries, and change chat.",
   "author": {
     "name": "Utkarsh Kumar",
