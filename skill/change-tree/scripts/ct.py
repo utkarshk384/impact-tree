@@ -38,7 +38,6 @@ def main(argv=None):
     serve_parser = subs.add_parser("serve")
     serve_parser.add_argument("--repo", default=".")
     serve_parser.add_argument("--port", type=int, default=0)
-    serve_parser.add_argument("--worker", required=True)
     compare_options(serve_parser)
     jobs_parser = subs.add_parser("jobs")
     jobs_parser.add_argument("--repo", default=".")
@@ -46,12 +45,45 @@ def main(argv=None):
     done_parser = job_subs.add_parser("done")
     done_parser.add_argument("job_id")
     done_parser.add_argument("result_file")
+    wait_parser = job_subs.add_parser("wait")
+    wait_parser.add_argument("--timeout", type=int, default=540)
+    for job_parser in (done_parser, wait_parser):
+        job_parser.add_argument("--repo", dest="job_repo", default=None)
+    for name in ("url", "stop"):
+        sub = subs.add_parser(name)
+        sub.add_argument("--repo", default=".")
+        if name == "url":
+            sub.add_argument("--wait", type=float, default=30)
     args = parser.parse_args(argv)
     try:
         if args.command == "jobs":
-            from jobs import submit
-            submit(repo.repo_root(args.repo), args.job_id, args.result_file)
+            import jobs
+            root = repo.repo_root(args.job_repo or args.repo)
+            if args.job_command == "wait":
+                code, line = jobs.wait(root, args.timeout)
+                print(line, flush=True)
+                return code
+            jobs.submit(root, args.job_id, args.result_file)
             print(f"Accepted Change Tree job {args.job_id}")
+            return 0
+        if args.command in ("url", "stop"):
+            import time
+            from server import server_info
+            root = repo.repo_root(args.repo)
+            deadline = time.monotonic() + (args.wait if args.command == "url" else 0)
+            info = server_info(root)
+            while not info and time.monotonic() < deadline:
+                time.sleep(0.25)
+                info = server_info(root)
+            if not info:
+                print("No Change Tree server is running for this repository.", file=sys.stderr)
+                return 3
+            if args.command == "url":
+                print(f"CHANGE_TREE_URL {info['url']}")
+                return 0
+            import jobs
+            jobs.request(root, "POST", "/api/shutdown", {"stop": True}, timeout=10)
+            print("Stopped Change Tree.")
             return 0
         root = repo.preflight(args.repo)
         if args.command == "preflight":

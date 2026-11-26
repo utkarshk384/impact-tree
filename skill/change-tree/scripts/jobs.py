@@ -1,23 +1,45 @@
-"""Send summary jobs to one persistent Herdr worker and validate its results."""
+"""Queue summary jobs for the agent that runs the skill, and validate the results.
+
+The server does not start or message an agent. The agent that ran the skill claims
+jobs with `ct.py jobs wait`, gives each job to a sub-agent, and the sub-agent
+submits the result with `ct.py jobs done`."""
 from collections import deque
 from dataclasses import dataclass
 import http.client
 import json
 from pathlib import Path
 import re
+import importlib.util
 import secrets
-import subprocess
-from threading import Condition, Thread
+import time
+from threading import Condition
 from urllib.parse import urlsplit
 
 from edits import EditError
-from repo import ChangeTreeError, command, decode
-from server import MAX_REQUEST, json_bytes, read_json, repo_cache, write_json
+from repo import ChangeTreeError
+from server import MAX_REQUEST, json_bytes, read_json, repo_cache, server_info, write_json
 
 
 JOB_ID = re.compile(r"[a-f0-9]{32}")
 FILE_BATCH = 15
 BATCH_BYTES = 55_000
+MAX_ACTIVE = 3
+CLAIM_TIMEOUT = 20 * 60
+STE_LINT = Path(__file__).resolve().parents[1] / "vendor" / "asd-ste100" / "ste_lint.py"
+STE_IGNORED = {"synonym-rotation"}
+_ste = None
+
+
+def ste_findings(value):
+    """Return the hard ASD-STE100 findings for one summary text."""
+    global _ste
+    if _ste is None:
+        spec = importlib.util.spec_from_file_location("change_tree_ste_lint", STE_LINT)
+        _ste = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_ste)
+    findings, _words = _ste.lint(value)
+    return [finding for finding in findings
+            if finding["level"] == "advisory-free" and finding["rule"] not in STE_IGNORED]
 
 
 @dataclass
@@ -35,6 +57,7 @@ class Active:
     plan: Plan
     kind: str
     files: list
+    claimed: float
 
 
 def file_context(file):
@@ -91,6 +114,11 @@ def validate_result(kind, files, has_task, result):
             value.encode("utf-8")
         except UnicodeEncodeError as error:
             raise EditError(f"{label} must be valid UTF-8.") from error
+        findings = ste_findings(value)
+        if findings:
+            problems = "; ".join(f"{finding['rule']} at '{finding['match']}': {finding['message']}"
+                                 for finding in findings[:5])
+            raise EditError(f"{label} breaks the ASD-STE100 writing rules. Rewrite it. {problems}")
         return value.strip()
 
     if not isinstance(result, dict):
@@ -132,24 +160,17 @@ class Jobs:
         self.directory = state.cache / "jobs"
         self.condition = Condition()
         self.plan = None
-        self.active = None
+        self.active = {}
         self.closed = False
-
-    def connect(self, url, token):
-        self.url = url
-        self.token = token
-        Thread(target=self.run, name="change-tree-jobs", daemon=True).start()
 
     def job_path(self, job_id):
         return self.directory / (job_id + ".json")
 
-    def session_path(self, job_id):
-        return self.directory / (job_id + ".session.json")
-
     def enqueue(self, snapshot, result, summaries):
         with self.condition:
-            if self.active and self.active.plan.snapshot == snapshot:
-                self.plan = self.active.plan
+            running = next((item.plan for item in self.active.values() if item.plan.snapshot == snapshot), None)
+            if running:
+                self.plan = running
                 self.state.summarize(snapshot, self.plan.summaries, "pending")
                 return
             if self.plan and self.plan.snapshot == snapshot and self.plan.pending:
@@ -175,67 +196,66 @@ class Jobs:
             "jobId": active.job_id, "comparisonId": plan.snapshot, "kind": active.kind,
             "task": plan.comparison["task"], "comparison": plan.comparison,
             "fileCount": len(plan.files),
+            "style": "ASD-STE100: follow the writing rules in the Worker mode section of SKILL.md.",
         }
-        if active.kind == "files":
-            payload["files"] = active.files
-        else:
-            payload["files"] = overview_context(plan)
+        payload["files"] = active.files if active.kind == "files" else overview_context(plan)
         return payload
 
     def clean(self, job_id):
-        for path in (self.job_path(job_id), self.session_path(job_id)):
-            try:
-                path.unlink(missing_ok=True)
-            except OSError:
-                pass
+        try:
+            self.job_path(job_id).unlink(missing_ok=True)
+        except OSError:
+            pass
 
-    def fail(self, active, message):
+    def expire(self):
+        """Put jobs back in the queue when nobody submitted them in time."""
+        now = time.monotonic()
+        for job_id, item in list(self.active.items()):
+            if now - item.claimed < CLAIM_TIMEOUT:
+                continue
+            del self.active[job_id]
+            self.clean(job_id)
+            if item.plan is self.plan:
+                item.plan.pending.appendleft((item.kind, item.files))
+
+    def ready(self):
+        """Return True when the next queued job can start now."""
+        if not self.plan or not self.plan.pending or len(self.active) >= MAX_ACTIVE:
+            return False
+        kind = self.plan.pending[0][0]
+        # The comparison overview needs every file summary, so it waits for the file jobs.
+        return kind != "comparison" or not any(item.plan is self.plan for item in self.active.values())
+
+    def claim(self, wait):
+        deadline = time.monotonic() + max(0, min(wait, 3600))
         with self.condition:
-            if self.active is not active:
-                return
-            self.clean(active.job_id)
-            self.active = None
-            active.plan.pending.clear()
-            self.state.summarize(active.plan.snapshot, active.plan.summaries, "failed", message)
-            self.condition.notify_all()
-
-    def run(self):
-        while True:
-            with self.condition:
-                self.condition.wait_for(lambda: self.closed or self.active is None and self.plan and self.plan.pending)
+            while True:
+                self.expire()
                 if self.closed:
-                    return
-                kind, files = self.plan.pending.popleft()
-                active = Active(secrets.token_hex(16), self.plan, kind, files)
-                self.active = active
-                try:
-                    write_json(self.job_path(active.job_id), self.dispatch_payload(active))
-                    write_json(self.session_path(active.job_id), {"url": self.url, "token": self.token})
-                except OSError:
-                    self.fail(active, "Summaries could not be queued in the Change Tree cache.")
-                    continue
+                    return {"closed": True}
+                if self.ready():
+                    break
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return {"job": None}
+                self.condition.wait(timeout=min(remaining, 30))
+            kind, files = self.plan.pending.popleft()
+            active = Active(secrets.token_hex(16), self.plan, kind, files, time.monotonic())
             try:
-                reported = command(["hc", "send", self.state.worker, f"change-tree job {self.job_path(active.job_id)}"],
-                                   self.state.root, timeout=45)
-                try:
-                    delivery = json.loads(reported.stdout)
-                except ValueError:
-                    delivery = {}
-                rejected = isinstance(delivery, dict) and delivery.get("started") is False
-                if reported.returncode or rejected:
-                    detail = decode(reported.stderr or reported.stdout).strip()
-                    if detail:
-                        print(f"Change Tree worker: {detail[:400]}", flush=True)
-                    self.fail(active, "The summary worker could not receive this job.")
-            except (OSError, subprocess.TimeoutExpired):
-                self.fail(active, "The summary worker could not receive this job.")
+                write_json(self.job_path(active.job_id), self.dispatch_payload(active))
+            except OSError:
+                self.plan.pending.appendleft((kind, files))
+                raise EditError("The job could not be written to the Change Tree cache.", 500)
+            self.active[active.job_id] = active
+            return {"job": {"id": active.job_id, "kind": kind, "path": str(self.job_path(active.job_id)),
+                            "files": len(files), "remaining": len(self.plan.pending)}}
 
     def done(self, body):
         job_id = body.get("jobId")
         with self.condition:
-            active = self.active
-            if not active or job_id != active.job_id:
-                raise EditError("This job is no longer active.", 409)
+            active = self.active.get(job_id)
+            if not active:
+                raise EditError("This job is no longer active. Claim a new job.", 409)
             plan = active.plan
             result = validate_result(active.kind, active.files, bool(plan.comparison["task"]), body.get("result"))
             if active.kind == "files":
@@ -243,33 +263,67 @@ class Jobs:
                 plan.summaries = {**plan.summaries, "files": files}
             else:
                 plan.summaries = {**plan.summaries, **result}
-            self.state.summarize(plan.snapshot, plan.summaries, "pending" if plan.pending else "complete")
-            self.clean(active.job_id)
-            self.active = None
+            del self.active[job_id]
+            self.clean(job_id)
+            busy = plan.pending or any(item.plan is plan for item in self.active.values())
+            self.state.summarize(plan.snapshot, plan.summaries, "pending" if busy else "complete")
             self.condition.notify_all()
         return {"accepted": True}
 
     def close(self):
         with self.condition:
             self.closed = True
-            if self.active:
-                self.clean(self.active.job_id)
+            for job_id in list(self.active):
+                self.clean(job_id)
+            self.active.clear()
             self.condition.notify_all()
+
+
+def request(root, method, path, body, timeout):
+    """Send an authenticated request to the running Change Tree server for this repository."""
+    info = server_info(root)
+    if not info:
+        raise ChangeTreeError("No Change Tree server is running for this repository.", 3)
+    origin = info["url"]
+    port = urlsplit(origin).port
+    data = json_bytes(body)
+    if len(data) > MAX_REQUEST:
+        raise ChangeTreeError("The request is too large.")
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
+    try:
+        connection.request(method, path, body=data, headers={
+            "Origin": origin, "Content-Type": "application/json", "X-Change-Tree-Token": info["token"],
+            "Connection": "close",
+        })
+        with connection.getresponse() as response:
+            raw = response.read()
+            try:
+                payload = json.loads(raw) if raw else {}
+            except ValueError:
+                payload = {}
+            if response.status != 200:
+                raise ChangeTreeError(payload.get("error", "The Change Tree server refused the request."))
+            return payload
+    except (OSError, http.client.HTTPException) as error:
+        raise ChangeTreeError("Could not reach the Change Tree server for this repository.", 3) from error
+    finally:
+        connection.close()
+
+
+def wait(root, seconds):
+    """Claim the next job. Return (exit code, line to print)."""
+    payload = request(root, "POST", "/api/jobs/claim", {"wait": seconds}, timeout=seconds + 30)
+    if payload.get("closed"):
+        return 3, "CHANGE_TREE_STOPPED"
+    job = payload.get("job")
+    if not job:
+        return 4, "CHANGE_TREE_IDLE"
+    return 0, f"CHANGE_TREE_JOB {job['id']} {job['kind']} {job['path']}"
 
 
 def submit(root, job_id, result_path):
     if not JOB_ID.fullmatch(job_id):
         raise ChangeTreeError("Invalid Change Tree job ID.")
-    session = read_json(repo_cache(root) / "jobs" / (job_id + ".session.json"), {})
-    try:
-        origin = session["url"]
-        token = session["token"]
-        url = urlsplit(origin)
-        if not url.port or origin != f"http://127.0.0.1:{url.port}" or not isinstance(token, str):
-            raise ValueError("invalid session credentials")
-    except (KeyError, ValueError, TypeError) as error:
-        raise ChangeTreeError("This job is unavailable. Use the repository and ID from the active job.") from error
-
     try:
         with Path(result_path).open("rb") as handle:
             raw = handle.read(MAX_REQUEST + 1)
@@ -278,26 +332,4 @@ def submit(root, job_id, result_path):
         result = json.loads(raw)
     except (ValueError, OSError, UnicodeError, RecursionError) as error:
         raise ChangeTreeError(f"Could not read the job result. {error}") from error
-
-    data = json_bytes({"jobId": job_id, "result": result})
-    if len(data) > MAX_REQUEST:
-        raise ChangeTreeError("The job result is too large.")
-    connection = http.client.HTTPConnection("127.0.0.1", url.port, timeout=15)
-    try:
-        connection.request("POST", "/api/jobs/done", body=data, headers={
-            "Origin": origin, "Content-Type": "application/json", "X-Change-Tree-Token": token,
-            "Connection": "close",
-        })
-        with connection.getresponse() as response:
-            if response.status == 200:
-                response.read()
-            else:
-                try:
-                    details = json.load(response)["error"]
-                except (ValueError, KeyError, TypeError):
-                    details = "Change Tree could not accept the job result."
-                raise ChangeTreeError(details)
-    except (OSError, http.client.HTTPException) as error:
-        raise ChangeTreeError("Could not reach the Change Tree server for this job.") from error
-    finally:
-        connection.close()
+    request(root, "POST", "/api/jobs/done", {"jobId": job_id, "result": result}, timeout=30)

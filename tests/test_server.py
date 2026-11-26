@@ -69,7 +69,7 @@ class ServerFixture(GitRepoMixin, unittest.TestCase):
 
     @contextmanager
     def server(self):
-        state = State(self.root, analyze, "fixture", cache=self.cache)
+        state = State(self.root, analyze, cache=self.cache)
         state.compare({"base": "HEAD", "head": "WORKTREE"})
         with Server(state, 0) as server:
             thread = Thread(target=server.serve_forever)
@@ -92,12 +92,30 @@ class ServerFixture(GitRepoMixin, unittest.TestCase):
         finally:
             connection.close()
 
+    def test_lines_returns_unchanged_text_of_the_new_version(self):
+        with self.server() as server:
+            same_origin = {"Origin": server.url, "X-Change-Tree-Token": server.token}
+            _, state = self.request(server, "GET", "/api/state")
+            file = state["files"][0]
+            status, result = self.request(server, "POST", "/api/lines", {
+                "snapshot": state["snapshot"], "path": file["path"], "start": 1, "end": 2}, **same_origin)
+            self.assertEqual(status, 200)
+            expected = (self.root / file["path"]).read_text().splitlines()
+            self.assertEqual(result["lines"], expected[:2])
+            self.assertEqual(result["total"], len(expected))
+            self.assertEqual(self.request(server, "POST", "/api/lines", {
+                "snapshot": state["snapshot"], "path": file["path"], "start": 1, "end": 2})[0], 403)
+            self.assertEqual(self.request(server, "POST", "/api/lines", {
+                "snapshot": state["snapshot"], "path": "../outside.txt", "start": 1, "end": 2}, **same_origin)[0], 404)
+            self.assertEqual(self.request(server, "POST", "/api/lines", {
+                "snapshot": "old", "path": file["path"], "start": 1, "end": 2}, **same_origin)[0], 409)
+
     def test_fork_pull_head_remains_available_after_unlinking(self):
         base = self.run_git("rev-parse", "HEAD").decode().strip()
         head = self.commit("Topic head")
         self.run_git("remote", "add", "fixture", str(self.root))
         self.run_git("update-ref", "refs/pull/11/head", head)
-        state = State(self.root, analyze, "fixture", cache=self.cache)
+        state = State(self.root, analyze, cache=self.cache)
         synthetic = "refs/change-tree/pr/11"
         pull = {"base": base, "head": synthetic, "headLabel": "topic", "value": 11,
                 "remote": "fixture", "fetchHead": True}

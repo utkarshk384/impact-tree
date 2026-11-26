@@ -3,17 +3,15 @@ import http.client
 from io import StringIO
 import json
 from pathlib import Path
-from queue import Queue
-import subprocess
 from threading import Thread
 import unittest
 from unittest.mock import patch
 
 from test_analysis import GitRepoMixin
 import ct
-from jobs import Jobs, submit
+from jobs import Jobs, submit, wait
 from repo import ChangeTreeError
-from server import Server, State, read_json
+from server import Server, State, read_json, write_json
 
 
 def file_result(job):
@@ -34,27 +32,18 @@ class JobsFixture(GitRepoMixin, unittest.TestCase):
         for name in names:
             self.write(name, "SETTING = 1\n")
         self.cache = self.root / ".git" / "test-cache"
-        self.notifications = Queue()
-
-        def notify(args, cwd, timeout):
-            self.notifications.put((args, cwd))
-            return subprocess.CompletedProcess(args, 0, b"{}", b"")
-
         for target, value in (
             ("impact.refresh_graph", {"nodes": [], "links": []}),
-            ("jobs.repo_cache", self.cache),
+            ("server.repo_cache", self.cache),
         ):
             mock = patch(target, return_value=value)
             mock.start()
             self.addCleanup(mock.stop)
-        transport = patch("jobs.command", side_effect=notify)
-        transport.start()
-        self.addCleanup(transport.stop)
-        self.state = State(self.root, ct.analyze, "worker-fixture", job_factory=Jobs, cache=self.cache)
+        self.state = State(self.root, ct.analyze, job_factory=Jobs, cache=self.cache)
         self.server = Server(self.state, 0)
         self.thread = Thread(target=self.server.serve_forever)
         self.thread.start()
-        self.state.jobs.connect(self.server.url, self.server.token)
+        write_json(self.cache / "server.json", {"url": self.server.url, "token": self.server.token})
         self.addCleanup(self.close_server)
         return self.compare()
 
@@ -67,12 +56,20 @@ class JobsFixture(GitRepoMixin, unittest.TestCase):
     def compare(self, task="Update defaults"):
         return self.state.compare({"base": "HEAD", "head": "WORKTREE", "task": task})
 
-    def next_job(self):
-        args, cwd = self.notifications.get(timeout=4)
-        self.assertEqual(args[:3], ["hc", "send", "worker-fixture"])
-        self.assertEqual(cwd, self.root)
-        self.assertTrue(args[3].startswith("change-tree job "))
-        path = Path(args[3].removeprefix("change-tree job "))
+    def no_job(self):
+        self.assertEqual(wait(self.root, 0), (4, "CHANGE_TREE_IDLE"))
+
+    def next_job(self, cli=False):
+        if cli:
+            printed = StringIO()
+            with redirect_stdout(printed):
+                self.assertEqual(ct.main(["jobs", "wait", "--repo", str(self.root), "--timeout", "4"]), 0)
+            line = printed.getvalue().strip()
+        else:
+            code, line = wait(self.root, 4)
+            self.assertEqual(code, 0, line)
+        self.assertTrue(line.startswith("CHANGE_TREE_JOB "), line)
+        path = Path(line.split(" ", 3)[3])
         self.assertEqual(path.parent, self.cache / "jobs")
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
         return read_json(path, None)
@@ -105,20 +102,22 @@ class JobsFixture(GitRepoMixin, unittest.TestCase):
             return json.loads(line[len(prefix):])
 
         self.assertEqual(event()["snapshot"], start["snapshot"])
-        first = self.next_job()
+        first = self.next_job(cli=True)
         self.assertEqual(len(first["files"]), 15)
         self.assertEqual(first["kind"], "files")
         self.assertEqual(first["task"], "Update defaults")
-        self.assertTrue(self.notifications.empty())
+        # File batches run in parallel, so sub-agents can work at the same time.
+        second = self.next_job()
+        self.assertEqual(len(second["files"]), 1)
+        # The overview waits until every file batch is done.
+        self.no_job()
         with self.assertRaisesRegex(ChangeTreeError, "every path"):
             self.done(first, {"files": {}})
-        self.assertTrue(self.notifications.empty())
         self.done(first, file_result(first), cli=True)
         update = event()
         self.assertEqual(len(update["summaries"]["files"]), 15)
         self.assertEqual(update["summaryStatus"], "pending")
-        second = self.next_job()
-        self.assertEqual(len(second["files"]), 1)
+        self.no_job()
         self.done(second, file_result(second))
         overview = self.next_job()
         self.assertEqual(overview["kind"], "comparison")
@@ -135,7 +134,7 @@ class JobsFixture(GitRepoMixin, unittest.TestCase):
         self.assertEqual(len(cached["summaries"]["files"]), 16)
         reopened = self.compare()
         self.assertEqual(reopened["summaryStatus"], "complete", reopened.get("error"))
-        self.assertTrue(self.notifications.empty())
+        self.no_job()
 
         file = self.state.get()["files"][0]
         saved = self.state.save({"snapshot": start["snapshot"], "hash": file["contentHash"], "path": file["path"],
@@ -153,7 +152,6 @@ class JobsFixture(GitRepoMixin, unittest.TestCase):
         first = self.next_job()
         next_comparison = self.compare(task="")
         self.assertNotEqual(original["snapshot"], next_comparison["snapshot"])
-        self.assertTrue(self.notifications.empty())
         self.done(first, file_result(first))
         current = self.next_job()
         self.assertEqual(current["comparisonId"], next_comparison["snapshot"])
@@ -166,6 +164,33 @@ class JobsFixture(GitRepoMixin, unittest.TestCase):
         del invalid["taskFit"]
         self.done(overview, {"comparison": invalid})
         self.assertEqual(self.state.get()["summaries"]["comparison"], invalid)
+
+    def test_summaries_must_follow_ste_rules(self):
+        self.start_jobs(files=1)
+        job = self.next_job()
+        result = file_result(job)
+        path = job["files"][0]["path"]
+        result["files"][path]["summary"] = "This is a seamless change; it updates the setting."
+        with self.assertRaisesRegex(ChangeTreeError, "ASD-STE100.*semicolon"):
+            self.done(job, result)
+        result["files"][path]["summary"] = "This change updates the setting."
+        self.done(job, result)
+
+    def test_unsubmitted_jobs_return_to_the_queue(self):
+        self.start_jobs(files=1)
+        job = self.next_job()
+        with patch("jobs.CLAIM_TIMEOUT", 0):
+            again = self.next_job()
+        self.assertEqual([file["path"] for file in again["files"]], [file["path"] for file in job["files"]])
+        with self.assertRaisesRegex(ChangeTreeError, "no longer active"):
+            self.done(job, file_result(job))
+        self.done(again, file_result(again))
+
+    def test_wait_reports_a_missing_server(self):
+        self.start_jobs(files=1)
+        (self.cache / "server.json").unlink()
+        with self.assertRaisesRegex(ChangeTreeError, "No Change Tree server"):
+            wait(self.root, 0)
 
 
 if __name__ == "__main__":

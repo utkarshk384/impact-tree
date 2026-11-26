@@ -20,6 +20,7 @@ WEB = Path(__file__).resolve().parents[1] / "web"
 ASSETS = {"/": ("index.html", "text/html"), "/styles.css": ("styles.css", "text/css"),
           "/app.js": ("app.js", "text/javascript"), "/tree.js": ("tree.js", "text/javascript")}
 MAX_REQUEST = 6_000_000
+MAX_EXPAND_LINES = 20_000
 
 
 def json_bytes(data):
@@ -58,15 +59,39 @@ def repo_cache(root):
     return Path.home() / ".cache" / "change-tree" / key
 
 
+def server_info_path(root):
+    return repo_cache(root) / "server.json"
+
+
+def server_info(root):
+    """Return the running server's URL and token, or None when no server answers."""
+    info = read_json(server_info_path(root), None)
+    if not isinstance(info, dict) or not isinstance(info.get("url"), str) or not isinstance(info.get("token"), str):
+        return None
+    port = urlsplit(info["url"]).port
+    if not port or info["url"] != f"http://127.0.0.1:{port}":
+        return None
+    import http.client
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+    try:
+        connection.request("GET", "/api/ping", headers={"Host": f"127.0.0.1:{port}"})
+        with connection.getresponse() as response:
+            response.read()
+            return info if response.status == 200 else None
+    except (OSError, ValueError):
+        return None
+    finally:
+        connection.close()
+
+
 def public_error(error):
     return " ".join(str(error).splitlines()) or "Change Tree could not analyze this comparison."
 
 
 class State:
-    def __init__(self, root, analyze, worker, job_factory=None, cache=None):
+    def __init__(self, root, analyze, job_factory=None, cache=None):
         self.root = root
         self.analyze = analyze
-        self.worker = worker
         self.cache = cache or repo_cache(root)
         self.changed = Condition()
         self.operations = Lock()
@@ -176,6 +201,33 @@ class State:
                     comparison["description"] = f"Three-dot diff · merge base {comparison['diffBase'][:7]} → {label}"
             return self.publish(result)
 
+    def lines(self, body):
+        """Return unchanged lines of a changed file's new version, so the page can expand diff gaps."""
+        current = self.get()
+        comp = current["comparison"]
+        if body.get("snapshot") != current["snapshot"]:
+            raise EditError(CHANGED, 409)
+        file = next((file for file in current["files"] if file["path"] == body.get("path")), None)
+        if file is None or file["status"] == "D" or file.get("binary"):
+            raise EditError("This file has no unchanged lines to show.", 404)
+        start, end = body.get("start"), body.get("end")
+        if not all(type(value) is int for value in (start, end)) or start < 1 or end < start:
+            raise EditError("Choose a valid line range.")
+        end = min(end, start + MAX_EXPAND_LINES - 1)
+        try:
+            if comp.get("mode") == "worktree":
+                target = Path(comp["target"]).resolve()
+                path = (target / file["path"]).resolve()
+                if target not in path.parents or not path.is_file():
+                    raise EditError("The file is outside the compared worktree.", 404)
+                data = path.read_bytes()
+            else:
+                data = git(self.root, "cat-file", "blob", f"{comp['headCommit']}:{file['path']}")
+        except ChangeTreeError as error:
+            raise EditError(f"Could not read the file. {public_error(error)}", 404) from error
+        text = data.decode("utf-8", errors="replace").splitlines()
+        return {"lines": [line[:16000] for line in text[start - 1:end]], "start": start, "total": len(text)}
+
     def save(self, body):
         with self.operations:
             previous = self.get()
@@ -273,6 +325,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_bytes(200, kind, payload)
         elif path == "/api/state":
             self.json(200, self.server.state.get())
+        elif path == "/api/ping":
+            self.json(200, {"ok": True})
         elif path == "/api/events":
             self.stream_events()
         else:
@@ -301,8 +355,19 @@ class Handler(BaseHTTPRequestHandler):
                 self.json(200, state.compare(self.body()))
             elif path == "/api/save":
                 self.json(200, state.save(self.body()))
+            elif path == "/api/lines":
+                self.json(200, state.lines(self.body()))
+            elif path == "/api/jobs/claim" and state.jobs:
+                wait = self.body().get("wait", 0)
+                if not isinstance(wait, (int, float)) or isinstance(wait, bool):
+                    raise EditError("wait must be a number of seconds.")
+                self.json(200, state.jobs.claim(wait))
             elif path == "/api/jobs/done" and state.jobs:
                 self.json(200, state.jobs.done(self.body()))
+            elif path == "/api/shutdown":
+                self.body()
+                self.json(200, {"stopping": True})
+                Thread(target=self.server.shutdown, daemon=True).start()
             else:
                 self.close_connection = True
                 self.json(404, {"error": "Endpoint not found."})
@@ -322,10 +387,16 @@ class Server(ThreadingHTTPServer):
 
 
 def serve(root, analyze, args, job_factory=None):
-    state = State(root, analyze, args.worker, job_factory=job_factory)
+    running = server_info(root)
+    if running:
+        print(f"CHANGE_TREE_RUNNING {running['url']}", flush=True)
+        raise ChangeTreeError(f"Change Tree is already running for this repository at {running['url']}. "
+                              "Use that page, or stop it with `ct.py stop`.", 5)
+    state = State(root, analyze, job_factory=job_factory)
     with Server(state, args.port) as server:
-        if state.jobs:
-            state.jobs.connect(server.url, server.token)
+        info_path = server_info_path(root)
+        write_json(info_path, {"url": server.url, "token": server.token, "pid": os.getpid()})
+        os.chmod(info_path, 0o600)
         Thread(target=state.initialize, args=(args.base, args.head, args.task), daemon=True).start()
         print(f"CHANGE_TREE_URL {server.url}", flush=True)
         try:
@@ -335,3 +406,6 @@ def serve(root, analyze, args, job_factory=None):
         finally:
             if state.jobs:
                 state.jobs.close()
+            if read_json(info_path, {}).get("token") == server.token:
+                info_path.unlink(missing_ok=True)
+            print("CHANGE_TREE_STOPPED", flush=True)

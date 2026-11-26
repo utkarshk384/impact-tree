@@ -16,6 +16,8 @@ const icons = {
   unified: '<rect x="4" y="4" width="16" height="16" rx="2"></rect><path d="M8 9h8M8 13h8M8 17h5"></path>',
   split: '<rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M12 4v16"></path>',
   gap: '<path d="M8 9l4-4 4 4M8 15l4 4 4-4"></path>',
+  expandUp: '<path d="M12 19V7M7 12l5-5 5 5"></path><path d="M5 4h14"></path>',
+  expandDown: '<path d="M12 5v12M7 12l5 5 5-5"></path><path d="M5 20h14"></path>',
   pull: '<circle cx="6" cy="6" r="2.5"></circle><circle cx="6" cy="18" r="2.5"></circle><circle cx="18" cy="18" r="2.5"></circle><path d="M6 8.5v7M18 15.5V10a3 3 0 0 0-3-3h-4"></path>',
   search: '<circle cx="11" cy="11" r="7"></circle><path d="M20 20l-4-4"></path>',
 };
@@ -48,6 +50,52 @@ const blockName = (count) => `${count} ${count === 1 ? 'block' : 'blocks'}`;
 const band = (score) => score >= 66 ? 'high' : score >= 33 ? 'medium' : 'low';
 const bar = (score) => `<span class="impact-bar" aria-hidden="true"><span style="width:${score}%"></span></span><span class="impact-number" aria-label="Impact ${score}">${score}</span>`;
 const selectedFile = () => state.files.find((file) => file.path === selected);
+
+const USED_BY_LIMIT = 60;
+function usedByTree(file) {
+  const paths = file.usedBy || [];
+  if (!paths.length) return '<p class="used-by-empty">No code imports it</p>';
+  const depth = file.usedByDepth || {};
+  const changed = new Set(state.files.map((item) => item.path));
+  const shown = paths.slice(0, USED_BY_LIMIT);
+  const root = {dirs: new Map(), files: []};
+  for (const path of shown) {
+    const parts = path.split('/');
+    let node = root;
+    for (const part of parts.slice(0, -1)) {
+      if (!node.dirs.has(part)) node.dirs.set(part, {dirs: new Map(), files: []});
+      node = node.dirs.get(part);
+    }
+    node.files.push(path);
+  }
+  const leaf = (path) => {
+    const name = path.split('/').pop();
+    const distance = depth[path];
+    const tag = distance === 1 ? 'imports it' : distance ? `via ${distance - 1} ${distance === 2 ? 'file' : 'files'}` : '';
+    const label = `<span class="ub-name">${esc(name)}</span>${tag ? `<span class="ub-tag${distance === 1 ? ' direct' : ''}">${tag}</span>` : ''}`;
+    return changed.has(path)
+      ? `<li><button type="button" class="ub-file changed" data-action="file" data-path="${esc(path)}" title="${esc(path)} · changed in this comparison">${label}</button></li>`
+      : `<li><span class="ub-file" title="${esc(path)}">${label}</span></li>`;
+  };
+  const branch = (node) => {
+    const dirs = [...node.dirs.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([name, child]) => {
+      let label = name;
+      while (child.dirs.size === 1 && !child.files.length) {
+        const [next, grand] = [...child.dirs.entries()][0];
+        label += '/' + next;
+        child = grand;
+      }
+      return `<li><details open><summary><span class="ub-dir">${esc(label)}/</span></summary><ul>${branch(child)}</ul></details></li>`;
+    });
+    const files = node.files.slice().sort((a, b) => (depth[a] - depth[b]) || a.localeCompare(b)).map(leaf);
+    return dirs.join('') + files.join('');
+  };
+  const direct = paths.filter((path) => depth[path] === 1).length;
+  const more = paths.length - shown.length;
+  return `<p class="used-by-count">${paths.length} ${paths.length === 1 ? 'file' : 'files'} · ${direct} import it directly</p>
+    <ul class="ub-tree" aria-label="Files that use ${esc(file.name)}"><li><details open><summary><span class="ub-dir">${esc(state.repo || 'repository')}/</span></summary><ul>${branch(root)}</ul></details></li></ul>
+    ${more > 0 ? `<p class="used-by-count">${more} more not shown</p>` : ''}`;
+}
 const summaryFallback = () => state.summaryError || 'Summarizing…';
 
 for (const holder of document.querySelectorAll('[data-icon]')) {
@@ -354,6 +402,86 @@ function splitDiff(lines) {
   return rows.join('');
 }
 
+const EXPAND_STEP = 20;
+const fileLines = new Map();
+const gapReveal = new Map();
+const gapKey = (index) => `${state.snapshot}|${selected}|${index}`;
+
+// New-side line range and old-number offset of the unchanged gap before hunk `index`
+// (index === hunks.length means the stretch after the last hunk).
+function gapRange(file, index) {
+  const hunks = file.hunks;
+  const previous = hunks[index - 1];
+  const start = previous ? previous.newStart + previous.newCount : 1;
+  if (index < hunks.length) {
+    const hunk = hunks[index];
+    return {start, end: start + hunk.gap - 1, offset: hunk.newStart - hunk.oldStart};
+  }
+  const loaded = fileLines.get(`${state.snapshot}|${file.path}`);
+  const end = loaded ? loaded.length : Infinity;
+  return {start, end, offset: previous ? (previous.newStart + previous.newCount) - (previous.oldStart + previous.oldCount) : 0};
+}
+
+function contextRows(lines) {
+  return lines.map((line) => diffView === 'split' && !editing
+    ? `<div class="pair">${diffRow(line, [line.before])}${diffRow(line, [line.after])}</div>`
+    : diffRow(line, [line.before, line.after])).join('');
+}
+
+function diffGap(file, index) {
+  const {start, end, offset} = gapRange(file, index);
+  const size = end - start + 1;
+  if (size <= 0) return '';
+  const trailing = index === file.hunks.length;
+  if (trailing) {
+    // Git shows 3 context lines after the last change. Fewer means the file ends there.
+    const last = file.hunks[file.hunks.length - 1];
+    let context = 0;
+    for (let i = last.lines.length - 1; i >= 0 && last.lines[i].kind === 'context'; i--) context++;
+    if (context < 3) return '';
+  }
+  const reveal = gapReveal.get(gapKey(index)) || {top: 0, bottom: 0};
+  const loaded = fileLines.get(`${state.snapshot}|${file.path}`);
+  const row = (number) => ({kind: 'context', text: normalizeLine(loaded?.[number - 1] ?? ''), before: number - offset, after: number});
+  const top = Math.min(reveal.top, size);
+  const bottom = Math.min(reveal.bottom, size - top);
+  const hidden = size - top - bottom;
+  const wrap = (rows) => rows.length ? `<div class="diff-${diffView === 'split' && !editing ? 'split' : 'unified'} diff-expanded">${contextRows(rows)}</div>` : '';
+  const topRows = loaded ? Array.from({length: top}, (_, i) => row(start + i)) : [];
+  const bottomRows = loaded ? Array.from({length: bottom}, (_, i) => row(end - bottom + 1 + i)) : [];
+  let bar = '';
+  if (hidden > 0) {
+    const count = Number.isFinite(hidden) ? `⋯ ${hidden} unchanged ${hidden === 1 ? 'line' : 'lines'}` : '⋯ Rest of the file';
+    const label = Number.isFinite(hidden) ? `${hidden} unchanged lines` : 'the rest of the file';
+    const buttons = editing ? '' : [
+      index > 0 ? `<button type="button" class="gap-button" data-action="expand" data-gap="${index}" data-direction="down" aria-label="Show ${EXPAND_STEP} more lines after the previous block">${icon('expandDown')}</button>` : '',
+      !trailing ? `<button type="button" class="gap-button" data-action="expand" data-gap="${index}" data-direction="up" aria-label="Show ${EXPAND_STEP} more lines before the next block">${icon('expandUp')}</button>` : '',
+      `<button type="button" class="gap-button" data-action="expand" data-gap="${index}" data-direction="all" aria-label="Show all ${label}">${icon('gap')}</button>`,
+    ].join('');
+    bar = `<div class="diff-gap">${buttons || icon('gap')}<span>${count}${index === 0 && !top && !bottom ? ' before this block' : ''}</span></div>`;
+  }
+  return wrap(topRows) + bar + wrap(bottomRows);
+}
+
+async function expandGap(index, direction) {
+  const file = selectedFile();
+  if (!file) return;
+  const cacheKey = `${state.snapshot}|${file.path}`;
+  if (!fileLines.has(cacheKey)) {
+    const result = await post('lines', {snapshot: state.snapshot, path: file.path, start: 1, end: 1000000});
+    fileLines.set(cacheKey, result.lines);
+  }
+  const {start, end} = gapRange(file, index);
+  const size = Math.max(0, end - start + 1);
+  const key = gapKey(index);
+  const reveal = gapReveal.get(key) || {top: 0, bottom: 0};
+  if (direction === 'all') reveal.top = size;
+  else if (direction === 'down') reveal.top += EXPAND_STEP;
+  else reveal.bottom += EXPAND_STEP;
+  gapReveal.set(key, reveal);
+  renderFile(true);
+}
+
 function diffHunk(hunk, index) {
   const range = hunkRange(hunk);
   const lines = hunkLines(hunk);
@@ -367,7 +495,7 @@ function diffHunk(hunk, index) {
   } else {
     content = `<div class="diff-unified">${lines.map((line) => diffRow(line, [line.before, line.after])).join('')}</div>`;
   }
-  return `${hunk.gap ? `<div class="diff-gap">${icon('gap')} <span>⋯ ${hunk.gap} unchanged lines${index === 0 ? ' before this block' : ''}</span></div>` : ''}
+  return `${hunk.gap ? diffGap(selectedFile(), index) : ''}
     <div class="diff-block" id="blk-${index + 1}" role="group" aria-label="Block ${index + 1}: ${range}">
       ${content}<span class="tip block-tip"><button type="button" class="info" aria-label="AI summary of change ${index + 1}: ${range}" aria-describedby="tip-${index + 1}">${icon('info')}</button>
       <span class="tipbox" role="tooltip" id="tip-${index + 1}"><b data-hunk-title="${index}">${range}</b>
@@ -405,7 +533,6 @@ function renderFile(preserveScroll = false) {
   const previousFile = state.files[(index + state.files.length - 1) % state.files.length];
   const comparison = state.comparison;
   const range = `${comparison.base === 'HEAD' ? 'HEAD' : comparison.baseLabel} → ${comparison.headLabel.toLowerCase() === 'working tree' ? 'working tree' : comparison.headLabel}`;
-  const usedBy = file.usedBy.map((path) => path.split('/').pop()).join(', ');
   const currentBranch = (state.refs.worktrees || []).find((item) => item.value === 'WORKTREE')?.label.split(' · ')[1];
   const editorControls = !comparison.editable ?
     `<span class="read-only" title="Choose the working tree as Compare to edit files here">${icon('lock')} Read only · compare against the working tree to edit</span>` :
@@ -429,7 +556,7 @@ function renderFile(preserveScroll = false) {
         <div class="meter-reason">${esc(file.why)}</div>
       </div>
       <div class="ai-card"><b class="ai-label">AI summary · whole file</b><p id="file-summary"></p></div>
-      <div class="used-by"><b>Used by:</b> ${esc(usedBy ? (file.previousImporters?.length ? 'Before deletion · ' : '') + usedBy : 'No code imports it')}</div>
+      <section class="used-by" aria-label="Used by"><b>Used by${file.previousImporters?.length ? ' · before deletion' : ''}</b>${usedByTree(file)}</section>
       <div class="blocks-title"><b>Change blocks</b><span>${blockName(file.hunks.length)}</span></div>
       <nav class="blocks" aria-label="Change blocks">${file.hunks.map((hunk, i) => `<a href="#blk-${i + 1}" data-block="${i + 1}">
         <span class="block-index">${i + 1}</span><span class="block-detail"><span data-hunk-title="${i}">${hunkRange(hunk)}</span>
@@ -450,7 +577,7 @@ function renderFile(preserveScroll = false) {
         <span id="save-feedback" class="diff-feedback ${saveFailed ? 'error' : ''}" role="status" ${saveMessage ? '' : 'hidden'}>${esc(saveMessage)}</span>
       </div>
       <div class="diff-scroll" tabindex="0" aria-label="Git diff">
-        ${file.hunks.length ? file.hunks.map(diffHunk).join('') : `<p class="diff-notice">${esc(file.note || 'No text changes')}</p>`}
+        ${file.hunks.length ? file.hunks.map(diffHunk).join('') + (['A', 'D'].includes(file.status) ? '' : diffGap(file, file.hunks.length)) : `<p class="diff-notice">${esc(file.note || 'No text changes')}</p>`}
       </div>
     </div>`;
   dialog.querySelector('.diff-scroll').scrollTop = scrollTop;
@@ -723,6 +850,13 @@ document.addEventListener('click', (event) => {
       break;
     case 'file':
       openFile(button.dataset.path, button);
+      break;
+    case 'expand':
+      expandGap(Number(button.dataset.gap), button.dataset.direction).catch((error) => {
+        saveMessage = error.message;
+        saveFailed = true;
+        renderFile(true);
+      });
       break;
     case 'folder': {
       const path = button.dataset.path;

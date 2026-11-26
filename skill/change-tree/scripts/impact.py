@@ -340,7 +340,7 @@ def score_file(file, distances, type_score, reason, changed, reference):
     file.update(
         score=score, band="high" if score >= 66 else "medium" if score >= 33 else "low",
         impact={"reach": round(reach, 1), "changeType": type_score, "size": round(size, 1)},
-        why=reason, usedBy=used_by,
+        why=reason, usedBy=used_by, usedByDepth={path: distances[path] for path in used_by},
     )
 
 
