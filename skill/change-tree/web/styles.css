@@ -357,3 +357,5 @@ b { font-weight: 600; }
   .ref-results .kind { width: auto; }
   .ref-results .ref-name { width: min(150px, 28vw); }
 }
+
+.ai-card code, .task-fit code, .tipbox code { font: 400 0.92em var(--mono); color: #ececec; background: #ffffff12; padding: 0 4px; border-radius: 5px; }

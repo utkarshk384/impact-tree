@@ -42,6 +42,8 @@ let canvas = null;
 let canvasView = null;
 
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => replacements[character]);
+// AI text: escape it, then show `names` as inline code.
+const aiText = (value) => esc(value).replace(/`([^`\n]+)`/g, '<code>$1</code>');
 const icon = (name, size = 14) =>
   `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name]}</svg>`;
 const glyph = (file) => `<span class="chip chip-letter status-${file.status}" aria-label="${statusWords[file.status]}">${file.status}</span>`;
@@ -330,9 +332,9 @@ function renderOverview() {
     <div class="muted">This comparison</div>
     <h2>${esc(comparison.headline || (state.loading ? 'Analyzing comparison…' : changedCount()))}</h2>
     ${state.comparison.mode === "three-dot" ? `<div class="subtle">${esc(state.comparison.description)}</div>` : ''}
-    <div class="ai-card"><b class="ai-label">AI summary</b><p>${esc(summary)}</p></div>
+    <div class="ai-card"><b class="ai-label">AI summary</b><p>${aiText(summary)}</p></div>
     ${task ? `<div class="task-card"><b>Task</b><p class="task-text">${esc(task)}</p>
-      <p class="task-fit"><b class="ai-label">Fit with the task:</b> ${esc(comparison.taskFit || summaryFallback())}</p></div>` :
+      <p class="task-fit"><b class="ai-label">Fit with the task:</b> ${aiText(comparison.taskFit || summaryFallback())}</p></div>` :
     '<button type="button" class="add-task" data-action="task">Add a task summary so the AI can relate these changes to it</button>'}
     <div class="metrics"><div><b>${state.files.length}</b><span class="muted">files</span></div>
       <div><b class="add">+${stats.added}</b><span class="muted">lines added</span></div>
@@ -507,7 +509,7 @@ function refreshFileSummaries() {
   const file = selectedFile();
   if (!file || !$('file-summary')) return;
   const summary = state.summaries.files?.[file.path] || {};
-  $('file-summary').textContent = summary.summary || summaryFallback();
+  $('file-summary').innerHTML = aiText(summary.summary || summaryFallback());
   for (const [index, hunk] of file.hunks.entries()) {
     const entry = summary.hunks?.[index];
     const title = entry?.title || hunkRange(hunk);
@@ -515,7 +517,7 @@ function refreshFileSummaries() {
     block.setAttribute('aria-label', `Block ${index + 1}: ${title}`);
     block.querySelector('button').setAttribute('aria-label', `AI summary of change ${index + 1}: ${title}`);
     for (const item of $('file-dialog').querySelectorAll(`[data-hunk-title="${index}"]`)) item.textContent = title;
-    block.querySelector('[data-hunk-summary]').textContent = entry?.summary || summaryFallback();
+    block.querySelector('[data-hunk-summary]').innerHTML = aiText(entry?.summary || summaryFallback());
   }
 }
 
