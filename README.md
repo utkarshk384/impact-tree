@@ -60,17 +60,27 @@ Use the same arguments when you invoke the skill in Codex or run the standalone 
 
 ### Install from the repository marketplace
 
-In Codex, run both commands and start a new session.
+#### Claude Code
+
+Install Impact Tree from the project's GitHub-hosted marketplace. Run this command in your terminal.
+
+```sh
+claude plugin install impact-tree --marketplace utkarshk384/impact-tree-public
+```
+
+If you're already in a Claude Code session, run this there.
+
+```text
+/plugin install impact-tree --marketplace utkarshk384/impact-tree-public
+```
+
+#### Codex
+
+Run both commands and start a new session.
 
 ```sh
 codex plugin marketplace add utkarshk384/impact-tree-public
 codex plugin add impact-tree@impact-tree
-```
-
-In Claude Code, install the plugin from the marketplace.
-
-```text
-/plugin install impact-tree --marketplace utkarshk384/impact-tree-public
 ```
 
 ### Install the standalone skill
@@ -79,7 +89,7 @@ Clone the repository.
 
 ```sh
 git clone https://github.com/utkarshk384/impact-tree-public.git
-cd impact-tree
+cd impact-tree-public
 ```
 
 Run the installation command for your agent.
