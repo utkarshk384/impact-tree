@@ -1,0 +1,31 @@
+{
+  "name": "impact-tree",
+  "version": "0.1.0",
+  "description": "Review Git changes in a local browser with dependency graphs, file diffs, AI summaries, and change chat.",
+  "author": {
+    "name": "Utkarsh Kumar",
+    "url": "https://github.com/utkarshk384"
+  },
+  "homepage": "https://github.com/utkarshk384/impact-tree",
+  "repository": "https://github.com/utkarshk384/impact-tree",
+  "license": "MIT",
+  "keywords": ["git", "code-review", "diff", "dependencies"],
+  "skills": "./skill/",
+  "requires_local_executor": true,
+  "interface": {
+    "displayName": "Impact Tree",
+    "shortDescription": "Review Git changes visually",
+    "longDescription": "Open a local browser view of a Git comparison to trace dependencies, read diffs and AI summaries, and ask questions about changes. Requires a local Git worktree, Python 3.9 or later, Git, and Graphify. GitHub CLI is optional for pull request selection.",
+    "developerName": "Utkarsh Kumar",
+    "category": "Developer Tools",
+    "capabilities": ["Review Git diffs", "Trace file dependencies", "Summarize changes"],
+    "websiteURL": "https://github.com/utkarshk384/impact-tree",
+    "supportURL": "https://github.com/utkarshk384/impact-tree/issues",
+    "defaultPrompt": [
+      "Open Impact Tree for my working tree.",
+      "Open Impact Tree to compare my branch with main."
+    ],
+    "composerIcon": "./docs/logo.svg",
+    "logo": "./docs/logo.svg"
+  }
+}

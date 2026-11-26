@@ -15,6 +15,7 @@
   <a href="#install"><img src="https://img.shields.io/badge/Claude_Code-skill-D97757" alt="Claude Code skill"></a>
   <a href="#install"><img src="https://img.shields.io/badge/Codex-skill-333333" alt="Codex skill"></a>
   <a href="#requirements"><img src="https://img.shields.io/badge/Python-3.9%2B-3776AB" alt="Python 3.9 or later"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-333333" alt="MIT license"></a>
 </p>
 
 <p align="center">
@@ -31,22 +32,22 @@
 
 ## Quick start
 
-1. [Install the skill](#install) for Claude Code or Codex.
+1. [Install Impact Tree](#install) for Claude Code or Codex.
 2. Start the agent in the Git worktree you want to review.
-3. Run `/impact-tree` in Claude Code or `$impact-tree` in Codex.
+3. Run `/impact-tree:impact-tree` in Claude Code or `$impact-tree:impact-tree` in Codex. For a standalone install, use `/impact-tree` or `$impact-tree`.
 4. Open the local URL if the agent does not open it in your browser.
 
 ### Choose a comparison
 
 With no arguments, Impact Tree compares `HEAD` with the current working tree. The diff includes untracked files that Git does not ignore.
 
-| Claude Code example | Result |
+| Claude Code plugin example | Result |
 | --- | --- |
-| `/impact-tree main` | Compare `main` with the current working tree. |
-| `/impact-tree main..topic` | Compare the merge base of `main` and `topic` with `topic`. |
-| `/impact-tree main..topic --task "Apply the cart discount"` | Review the same diff with a task description for the AI summaries. |
+| `/impact-tree:impact-tree main` | Compare `main` with the current working tree. |
+| `/impact-tree:impact-tree main..topic` | Compare the merge base of `main` and `topic` with `topic`. |
+| `/impact-tree:impact-tree main..topic --task "Apply the cart discount"` | Review the same diff with a task description for the AI summaries. |
 
-Use the same arguments with `$impact-tree` in Codex. To change the comparison in the browser, press `/` to open the picker. The picker lists local branches, remote refs, recent commits, and worktrees. It also lists open GitHub pull requests when GitHub CLI can access the repository.
+Use the same arguments when you invoke the skill in Codex or run the standalone `/impact-tree` command. To change the comparison in the browser, press `/` to open the picker. The picker lists local branches, remote refs, recent commits, and worktrees. It also lists open GitHub pull requests when GitHub CLI can access the repository.
 
 ## Install
 
@@ -56,6 +57,23 @@ Use the same arguments with `$impact-tree` in Codex. To change the comparison in
 - Python 3.9 or later
 - Git and the `graphify` command on your `PATH`. [Install Graphify](https://github.com/Graphify-Labs/graphify#install).
 - GitHub CLI (`gh`) with an active login, if you want the pull request picker
+
+### Install from the repository marketplace
+
+In Codex, run both commands and start a new session.
+
+```sh
+codex plugin marketplace add utkarshk384/impact-tree
+codex plugin add impact-tree@impact-tree
+```
+
+In Claude Code, install the plugin from the marketplace.
+
+```text
+/plugin install impact-tree --marketplace utkarshk384/impact-tree
+```
+
+### Install the standalone skill
 
 Clone the repository.
 
@@ -121,6 +139,8 @@ Select the **AI** button in the header to choose the model and reasoning effort.
 
 Impact Tree stores settings in `~/.config/change-tree/config.json`. If you set `XDG_CONFIG_HOME`, it uses that directory instead of `~/.config`. It stores comparison and summary data under `~/.cache/change-tree/`.
 
+Impact Tree starts a local Python server and runs Graphify to build or refresh the dependency graph. It gives the active coding agent relevant diffs and context for summaries and chat. When GitHub CLI can access the repository, the pull request picker requests pull request metadata from GitHub.
+
 ## Troubleshooting
 
 | Problem | Action |
@@ -129,7 +149,7 @@ Impact Tree stores settings in `~/.config/change-tree/config.json`. If you set `
 | The picker lists no pull requests. | Run `gh auth status` to check your GitHub login. Check that the repository has a GitHub remote with open pull requests. |
 | Summaries or chat replies stay pending. | Check the agent session that started Impact Tree. Start the skill again if that session ended. |
 
-To stop the local server, ask the agent that started it to stop Impact Tree. You can also run this command with the paths to your Impact Tree clone and the repository under review.
+To stop the local server, ask the agent that started it to stop Impact Tree. If you installed from a clone, you can also run this command.
 
 ```sh
 python3 /path/to/impact-tree/skill/impact-tree/scripts/ct.py stop \
@@ -151,3 +171,11 @@ These views use the same sample cart discount change as the overview.
 ### Change chat
 
 ![Change chat in full-size mode with test suggestions and links to the relevant lines.](docs/change-chat.webp)
+
+## Credits
+
+This README uses design ideas from [Floorplan by `haydenschmitty`](https://github.com/haydenschmitty/floorplan).
+
+## License
+
+Impact Tree uses the [MIT License](LICENSE).

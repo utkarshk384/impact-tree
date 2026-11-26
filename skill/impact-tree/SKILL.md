@@ -9,7 +9,7 @@ Run everything with your own harness: its background commands and its sub-agents
 
 ## Arguments
 
-In Claude Code, parse `$ARGUMENTS` from `/impact-tree`. In Codex, parse the arguments after `$impact-tree` in the user's message.
+In Claude Code, parse `$ARGUMENTS` from `/impact-tree:impact-tree` or `/impact-tree`. In Codex, use the comparison arguments in the user's message.
 
 - `base..head`: compare two refs.
 - `base` alone: compare `base` with the working tree (`--head WORKTREE`).
