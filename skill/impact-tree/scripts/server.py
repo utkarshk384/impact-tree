@@ -50,7 +50,7 @@ def cache_json(path, data):
     try:
         write_json(path, data)
     except OSError as error:
-        print(f"Change Tree cache: {public_error(error)}", file=sys.stderr)
+        print(f"Impact Tree cache: {public_error(error)}", file=sys.stderr)
 
 
 def read_json(path, default):
@@ -168,7 +168,7 @@ def server_info(root):
 
 
 def public_error(error):
-    return " ".join(str(error).splitlines()) or "Change Tree could not analyze this comparison."
+    return " ".join(str(error).splitlines()) or "Impact Tree could not analyze this comparison."
 
 
 def current_summaries(summaries):
@@ -221,7 +221,7 @@ class State:
         try:
             save_settings(self.agent, settings)
         except OSError as error:
-            print(f"Change Tree settings: {public_error(error)}", file=sys.stderr)
+            print(f"Impact Tree settings: {public_error(error)}", file=sys.stderr)
         with self.changed:
             self.settings = settings
             self.notify()
@@ -406,7 +406,7 @@ class Handler(BaseHTTPRequestHandler):
         origin = self.headers.get("Origin")
         if (write and origin != self.server.url) or (origin and origin != self.server.url):
             self.close_connection = True
-            self.json(403, {"error": "This request must come from the Change Tree page."})
+            self.json(403, {"error": "This request must come from the Impact Tree page."})
             return False
         if write and not hmac.compare_digest(self.headers.get("X-Change-Tree-Token", "").encode(),
                                              self.server.token.encode()):
@@ -519,7 +519,7 @@ def serve(root, analyze, args, job_factory=None):
     running = server_info(root)
     if running:
         print(f"CHANGE_TREE_RUNNING {running['url']}", flush=True)
-        raise ChangeTreeError(f"Change Tree is already running for this repository at {running['url']}. "
+        raise ChangeTreeError(f"Impact Tree is already running for this repository at {running['url']}. "
                               "Use that page, or stop it with `ct.py stop`.", 5)
     settings = load_settings(args.agent)
     overrides = {key: value for key, value in (("model", args.model), ("effort", args.effort)) if value}

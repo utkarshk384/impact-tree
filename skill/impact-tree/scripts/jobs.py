@@ -435,7 +435,7 @@ class Jobs:
                 write_json(self.job_path(active.job_id), self.dispatch_payload(active))
             except OSError:
                 self.plan.pending.appendleft((kind, files))
-                raise EditError("The job could not be written to the Change Tree cache.", 500)
+                raise EditError("The job could not be written to the Impact Tree cache.", 500)
             self.active[active.job_id] = active
             return self.job_response(active.job_id, kind, len(files), len(self.plan.pending))
 
@@ -484,10 +484,10 @@ class Jobs:
 
 
 def request(root, method, path, body, timeout):
-    """Send an authenticated request to the running Change Tree server for this repository."""
+    """Send an authenticated request to the running Impact Tree server for this repository."""
     info = server_info(root)
     if not info:
-        raise ChangeTreeError("No Change Tree server is running for this repository.", 3)
+        raise ChangeTreeError("No Impact Tree server is running for this repository.", 3)
     origin = info["url"]
     port = urlsplit(origin).port
     data = json_bytes(body)
@@ -506,10 +506,10 @@ def request(root, method, path, body, timeout):
             except ValueError:
                 payload = {}
             if response.status != 200:
-                raise ChangeTreeError(payload.get("error", "The Change Tree server refused the request."))
+                raise ChangeTreeError(payload.get("error", "The Impact Tree server refused the request."))
             return payload
     except (OSError, http.client.HTTPException) as error:
-        raise ChangeTreeError("Could not reach the Change Tree server for this repository.", 3) from error
+        raise ChangeTreeError("Could not reach the Impact Tree server for this repository.", 3) from error
     finally:
         connection.close()
 
@@ -528,7 +528,7 @@ def wait(root, seconds):
 
 def submit(root, job_id, result_path):
     if not JOB_ID.fullmatch(job_id):
-        raise ChangeTreeError("Invalid Change Tree job ID.")
+        raise ChangeTreeError("Invalid Impact Tree job ID.")
     try:
         with Path(result_path).open("rb") as handle:
             raw = handle.read(MAX_REQUEST + 1)

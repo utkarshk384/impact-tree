@@ -1,8 +1,8 @@
-# Change Tree
+# Impact Tree
 
-<img src="docs/logo.svg" alt="A mint-green change node branching into two dependency nodes" width="96" height="96">
+<img src="docs/logo.svg" alt="Impact Tree logo" width="96" height="96">
 
-Change Tree is a skill for Claude Code and Codex that opens a local, interactive view of a Git comparison. It ranks changed files by dependency reach, change type and size. Open a card to see the diff and AI summaries for the file and each change block. You can edit diff blocks in the current working tree.
+Impact Tree is a skill for Claude Code and Codex that opens a local, interactive view of a Git comparison. It ranks changed files by dependency reach, change type and size. Open a card to see the diff and AI summaries for the file and each change block. You can edit diff blocks in the current working tree.
 
 ## Install
 
@@ -10,25 +10,25 @@ You need Python 3.9+, Git and Graphify on PATH. GitHub CLI with an active login 
 
 | Setup | Install from this project | Invoke |
 | --- | --- | --- |
-| Claude Code | `./install.sh claude` | `/change-tree` |
-| Codex | `./install.sh codex` | `$change-tree` |
+| Claude Code | `./install.sh claude` | `/impact-tree` |
+| Codex | `./install.sh codex` | `$impact-tree` |
 | Both | `./install.sh both` | Use the invocation for the active agent |
 
 `./install.sh` defaults to Claude Code. Both installations link to the same skill files.
 
-The installer also adds a short, marked block to the agent's global instructions: `~/.claude/CLAUDE.md` for Claude Code and `~/.codex/AGENTS.md` (or `$CODEX_HOME/AGENTS.md`) for Codex. The block tells the agent to run the Change Tree server and the summary and chat sub-agents inside its own harness, with background commands and native sub-agents, and not with hc, tmux or new terminal tabs. It overrides more general sub-agent rules for this skill only. A second run replaces the block and keeps the rest of the file. Use `--no-instructions` to skip it.
+The installer also adds a short, marked block to the agent's global instructions: `~/.claude/CLAUDE.md` for Claude Code and `~/.codex/AGENTS.md` (or `$CODEX_HOME/AGENTS.md`) for Codex. The block tells the agent to run the Impact Tree server and the summary and chat sub-agents inside its own harness, with background commands and native sub-agents, and not with hc, tmux or new terminal tabs. It overrides more general sub-agent rules for this skill only. A second run replaces the block and keeps the rest of the file. Use `--no-instructions` to skip it.
 
 ## Use
 
 Invoke the skill in the repository you want to review. Use the same arguments with either invocation.
 
-- `/change-tree` compares HEAD to the current working tree, including untracked files.
-- `/change-tree main` compares main to the current working tree.
-- `/change-tree main..topic --task "Share the product tab layout"` compares topic to its merge base with main.
+- `/impact-tree` compares HEAD to the current working tree, including untracked files.
+- `/impact-tree main` compares main to the current working tree.
+- `/impact-tree main..topic --task "Share the product tab layout"` compares topic to its merge base with main.
 
-Use the page's Compare picker to change the refs or task. The skill runs `graphify update` when the graph is stale, then starts the Python server as a background command of the agent session. The agent claims summary jobs with `ct.py jobs wait` and gives each job to a sub-agent. Up to 3 jobs run at the same time. Comparison and summary caches live under `~/.cache/change-tree/`. Stop the server with `python3 skill/change-tree/scripts/ct.py stop --repo <repo>`.
+Use the page's Compare picker to change the refs or task. The skill runs `graphify update` when the graph is stale, then starts the Python server as a background command of the agent session. The agent claims summary jobs with `ct.py jobs wait` and gives each job to a sub-agent. Up to 3 jobs run at the same time. Comparison and summary caches live under `~/.cache/change-tree/`. Stop the server with `python3 skill/impact-tree/scripts/ct.py stop --repo <repo>`.
 
-Summaries follow ASD-STE100 Simplified Technical English. The server checks every title and summary with the bundled linter (`skill/change-tree/vendor/asd-ste100`, MIT licence, from the asd-ste100 skill) and refuses text that breaks a hard rule, so the sub-agent corrects it.
+Summaries follow ASD-STE100 Simplified Technical English. The server checks every title and summary with the bundled linter (`skill/impact-tree/vendor/asd-ste100`, MIT licence, from the asd-ste100 skill) and refuses text that breaks a hard rule, so the sub-agent corrects it.
 
 In the file view, the Used by tree shows every file that reaches the changed file through imports, grouped by folder. It is always fully open and is not interactive. Changed files in it carry a "changed" tag. The bars between change blocks expand unchanged lines: 20 lines up, 20 lines down, or the whole gap.
 

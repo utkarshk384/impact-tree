@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
-  <title id="title">Change Tree</title>
+  <title id="title">Impact Tree</title>
   <rect x="0.5" y="0.5" width="63" height="63" rx="15.5" fill="#191919" stroke="#535353"/>
   <path d="M23 32h5c8 0 7-14 16-14m-16 14c8 0 7 14 16 14"
         fill="none" stroke="#d9dfdc" stroke-width="3.5" stroke-linecap="round"/>

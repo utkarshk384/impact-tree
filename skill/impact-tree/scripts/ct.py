@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Change Tree command-line entry point."""
+"""Impact Tree command-line entry point."""
 import argparse
 import json
 from pathlib import Path
@@ -72,7 +72,7 @@ def main(argv=None):
                 print(line, flush=True)
                 return code
             jobs.submit(root, args.job_id, args.result_file)
-            print(f"Accepted Change Tree job {args.job_id}")
+            print(f"Accepted Impact Tree job {args.job_id}")
             return 0
         if args.command == "config":
             from edits import EditError
@@ -100,14 +100,14 @@ def main(argv=None):
                 time.sleep(0.25)
                 info = server_info(root)
             if not info:
-                print("No Change Tree server is running for this repository.", file=sys.stderr)
+                print("No Impact Tree server is running for this repository.", file=sys.stderr)
                 return 3
             if args.command == "url":
                 print(f"CHANGE_TREE_URL {info['url']}")
                 return 0
             import jobs
             jobs.request(root, "POST", "/api/shutdown", {"stop": True}, timeout=10)
-            print("Stopped Change Tree.")
+            print("Stopped Impact Tree.")
             return 0
         root = repo.preflight(args.repo)
         if args.command == "preflight":

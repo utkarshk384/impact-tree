@@ -1,4 +1,4 @@
-"""Validate chat requests and results for the local Change Tree agent."""
+"""Validate chat requests and results for the local Impact Tree agent."""
 from pathlib import Path, PureWindowsPath
 
 from edits import EditError

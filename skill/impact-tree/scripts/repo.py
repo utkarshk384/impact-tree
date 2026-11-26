@@ -37,12 +37,12 @@ def repo_root(path):
     try:
         return Path(os.fsdecode(git(path, "rev-parse", "--show-toplevel").rstrip(b"\n"))).resolve()
     except (ChangeTreeError, OSError) as error:
-        raise ChangeTreeError("Change Tree requires a Git working tree.", 2) from error
+        raise ChangeTreeError("Impact Tree requires a Git working tree.", 2) from error
 
 
 def preflight(path):
     if not shutil.which("graphify"):
-        raise ChangeTreeError("Change Tree requires graphify on PATH.", 2)
+        raise ChangeTreeError("Impact Tree requires graphify on PATH.", 2)
     return repo_root(path)
 
 

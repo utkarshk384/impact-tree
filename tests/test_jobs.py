@@ -319,7 +319,7 @@ class JobsFixture(GitRepoMixin, unittest.TestCase):
     def test_wait_reports_a_missing_server(self):
         self.start_jobs(files=1)
         (self.cache / "server.json").unlink()
-        with self.assertRaisesRegex(ChangeTreeError, "No Change Tree server"):
+        with self.assertRaisesRegex(ChangeTreeError, "No Impact Tree server"):
             wait(self.root, 0)
 
     def test_settings_reach_claimed_jobs_and_are_saved(self):

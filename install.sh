@@ -1,16 +1,19 @@
 #!/bin/sh
-# Install the Change Tree skill for Claude Code, Codex or both.
+# Install the Impact Tree skill for Claude Code, Codex or both.
 #
 # The installer links the skill folder into the agent's skills folder. It also adds a short, marked
 # block to the agent's global instruction file (~/.claude/CLAUDE.md or ~/.codex/AGENTS.md). The block
-# tells the agent to run the Change Tree server and summary sub-agents inside its own harness:
+# tells the agent to run the Impact Tree server and summary sub-agents inside its own harness:
 # background commands and native sub-agents, not hc, tmux or new terminal tabs.
 # A second run replaces the block. Everything else in the instruction file stays as it is.
 set -eu
 
-source_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)/skill/change-tree
-begin_marker='<!-- change-tree:begin -->'
-end_marker='<!-- change-tree:end -->'
+source_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)/skill/impact-tree
+begin_marker='<!-- impact-tree:begin -->'
+end_marker='<!-- impact-tree:end -->'
+# Earlier versions of the skill were called change-tree. The installer removes their links and blocks.
+old_begin='<!-- change-tree:begin -->'
+old_end='<!-- change-tree:end -->'
 
 usage() {
   printf 'Usage: %s [claude|codex|both] [--no-instructions]\n' "$0" >&2
@@ -28,7 +31,7 @@ for argument do
 done
 
 if [ ! -f "$source_dir/SKILL.md" ]; then
-  printf 'Change Tree skill is missing at %s\n' "$source_dir" >&2
+  printf 'Impact Tree skill is missing at %s\n' "$source_dir" >&2
   exit 1
 fi
 
@@ -59,9 +62,9 @@ linked() {
 
 # Check every destination before changing anything.
 for agent in $agents; do
-  destination="$(skills_dir_for "$agent")/change-tree"
+  destination="$(skills_dir_for "$agent")/impact-tree"
   if { [ -e "$destination" ] || [ -L "$destination" ]; } && ! linked "$destination"; then
-    printf 'Change Tree could not be installed because %s already exists.\n' "$destination" >&2
+    printf 'Impact Tree could not be installed because %s already exists.\n' "$destination" >&2
     exit 1
   fi
 done
@@ -70,19 +73,19 @@ instruction_block() {
   if [ "$1" = claude ]; then
     background='the Bash tool with `run_in_background: true`'
     subagent='the Agent tool with `run_in_background: true`'
-    invoke='/change-tree'
+    invoke='/impact-tree'
   else
     background='a Codex background terminal'
     subagent='a native Codex sub-agent'
-    invoke='$change-tree'
+    invoke='$impact-tree'
   fi
   cat <<EOF
 $begin_marker
-## Change Tree skill
-When you run the change-tree skill (\`$invoke\`), run all of its parts inside this harness:
-- Start the Change Tree server (\`ct.py serve\`) and the job wait (\`ct.py jobs wait\`) in the background. Use $background.
+## Impact Tree skill
+When you run the impact-tree skill (\`$invoke\`), run all of its parts inside this harness:
+- Start the Impact Tree server (\`ct.py serve\`) and the job wait (\`ct.py jobs wait\`) in the background. Use $background.
 - Give each summary or chat job to a sub-agent. Use $subagent. Pass the job's model and effort when they are not \`default\`.
-- Do not use hc, herdr, tmux or other terminal managers for Change Tree, and do not open new terminal tabs. This rule overrides the general rules for sub-agents and terminals, for this skill only.
+- Do not use hc, herdr, tmux or other terminal managers for Impact Tree, and do not open new terminal tabs. This rule overrides the general rules for sub-agents and terminals, for this skill only.
 - Follow \`$source_dir/SKILL.md\` for the steps.
 $end_marker
 EOF
@@ -93,10 +96,10 @@ write_instructions() {
   file=$1
   mkdir -p "$(dirname -- "$file")"
   [ -f "$file" ] || : > "$file"
-  temporary=$(mktemp "${file}.change-tree.XXXXXX")
-  awk -v begin="$begin_marker" -v end="$end_marker" '
-    $0 == begin { skip = 1; next }
-    $0 == end { skip = 0; next }
+  temporary=$(mktemp "${file}.impact-tree.XXXXXX")
+  awk -v begin="$begin_marker" -v end="$end_marker" -v old_begin="$old_begin" -v old_end="$old_end" '
+    $0 == begin || $0 == old_begin { skip = 1; next }
+    $0 == end || $0 == old_end { skip = 0; next }
     !skip { print }
   ' "$file" > "$temporary"
   # Remove blank lines at the end, then add one blank line before the block.
@@ -110,23 +113,30 @@ write_instructions() {
   rm -f "$temporary.trim"
   if [ -f "$file" ] && cmp -s "$temporary" "$file"; then
     rm -f "$temporary"
-    printf 'Change Tree instructions are up to date in %s\n' "$file"
+    printf 'Impact Tree instructions are up to date in %s\n' "$file"
   else
     cat "$temporary" > "$file"
     rm -f "$temporary"
-    printf 'Wrote Change Tree instructions to %s\n' "$file"
+    printf 'Wrote Impact Tree instructions to %s\n' "$file"
   fi
 }
 
 for agent in $agents; do
   skills_dir=$(skills_dir_for "$agent")
-  destination="$skills_dir/change-tree"
+  destination="$skills_dir/impact-tree"
+  # Remove the link of the earlier change-tree name when it points into this project.
+  old="$skills_dir/change-tree"
+  if [ -L "$old" ]; then
+    case "$(readlink "$old")" in
+      "$(dirname -- "$source_dir")"/*) rm -f "$old"; printf 'Removed the old change-tree link at %s\n' "$old" ;;
+    esac
+  fi
   if linked "$destination"; then
-    printf 'Change Tree is already linked at %s\n' "$destination"
+    printf 'Impact Tree is already linked at %s\n' "$destination"
   else
     mkdir -p "$skills_dir"
     ln -s "$source_dir" "$destination"
-    printf 'Linked Change Tree at %s\n' "$destination"
+    printf 'Linked Impact Tree at %s\n' "$destination"
   fi
   if [ "$instructions" = yes ]; then
     write_instructions "$(instructions_file_for "$agent")" "$agent"

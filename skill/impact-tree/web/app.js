@@ -1001,7 +1001,7 @@ $('ref-search').addEventListener('input', renderPickerResults);
 async function loadState() {
   try {
     const response = await fetch('/api/state');
-    if (!response.ok) throw new Error('Could not reach the Change Tree server.');
+    if (!response.ok) throw new Error('Could not reach the Impact Tree server.');
     const result = await response.json();
     if (!busy) applyState(result);
   } catch (error) {
