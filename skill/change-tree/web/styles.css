@@ -534,3 +534,10 @@ b { font-weight: 600; }
 .fold-peek { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #a3a3a3; font-size: 12.5px; }
 .fold[open] .fold-peek { display: none; }
 .fold:not([open]) { padding-block: 10px; }
+
+.chat-expand { display: grid; place-items: center; width: 32px; height: 32px; margin-left: auto; padding: 0; border: 0; border-radius: 10px; background: transparent; color: #a3a3a3; }
+.chat-expand:hover, .chat-expand[aria-pressed="true"] { background: #2a2730; color: var(--text); }
+.chat-header .chat-expand + .chat-clear { margin-left: 0; }
+.chat-panel.full { top: 72px; left: 16px; right: 16px; bottom: 76px; width: auto; height: auto; z-index: 9; }
+.chat-panel.full .chat-thread, .chat-panel.full .chat-empty { width: min(880px, 100%); margin-inline: auto; }
+.chat-panel.full .chat-form > * { width: min(880px, 100%); margin-inline: auto; box-sizing: border-box; }

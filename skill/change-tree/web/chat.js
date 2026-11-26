@@ -8,8 +8,8 @@ const renderChat = (() => {
   launcher.setAttribute('aria-label', 'Open change chat');
   launcher.setAttribute('aria-controls', 'chat-panel');
   launcher.setAttribute('aria-expanded', 'false');
-  launcher.setAttribute('aria-keyshortcuts', 'C');
-  launcher.title = 'Change chat (C)';
+  launcher.setAttribute('aria-keyshortcuts', 'C Control+J Meta+J');
+  launcher.title = 'Change chat (C, or Ctrl J / ⌘ J)';
   launcher.innerHTML = spark;
 
   const panel = document.createElement('section');
@@ -22,6 +22,7 @@ const renderChat = (() => {
     <header class="chat-header">
       <span class="chat-icon">${spark}</span>
       <h2 id="chat-title">Change chat</h2>
+      <button type="button" class="chat-expand" aria-pressed="false" aria-label="Full size chat" aria-keyshortcuts="Control+Shift+Enter Meta+Shift+Enter" title="Full size (Ctrl ⇧ Enter / ⌘ ⇧ Enter)"></button>
       <button type="button" class="chat-clear">Clear</button>
       <button type="button" class="chat-close" aria-label="Close chat">×</button>
     </header>
@@ -90,6 +91,44 @@ const renderChat = (() => {
       scroll.scrollTop = scroll.scrollHeight;
     }
     input.focus({preventScroll: true});
+  }
+
+  // Full size: the panel fills the page below the header. The choice is kept across reloads.
+  const FULL_KEY = 'change-tree/chat-full/v1';
+  const expand = find('.chat-expand');
+  const expandIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"></path></svg>';
+  const shrinkIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 10h-6V4M4 14h6v6M14 10l7-7M10 14l-7 7"></path></svg>';
+  function setFull(value) {
+    panel.classList.toggle('full', value);
+    expand.setAttribute('aria-pressed', String(value));
+    expand.setAttribute('aria-label', value ? 'Normal size chat' : 'Full size chat');
+    expand.innerHTML = value ? shrinkIcon : expandIcon;
+    try {
+      localStorage.setItem(FULL_KEY, value ? '1' : '0');
+    } catch {
+      // The size then resets on reload.
+    }
+  }
+  function toggleFull() {
+    const stick = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 40;
+    setFull(!panel.classList.contains('full'));
+    if (panel.hidden) open();
+    else input.focus({preventScroll: true});
+    if (stick) scroll.scrollTop = scroll.scrollHeight;
+  }
+  let fullSaved = false;
+  try {
+    fullSaved = localStorage.getItem(FULL_KEY) === '1';
+  } catch {
+    fullSaved = false;
+  }
+  setFull(fullSaved);
+  expand.addEventListener('click', toggleFull);
+
+  // Up arrow in an empty input brings back the last question, to edit and send again.
+  function lastQuestion() {
+    const items = (state.chat || []).filter((item) => item.role === 'user');
+    return items.length ? items[items.length - 1].text : '';
   }
 
   function close() {
@@ -409,6 +448,54 @@ const renderChat = (() => {
   window.addEventListener('keydown', (event) => {
     if (event.defaultPrevented || event.isComposing || draft
         || document.querySelector('.shortcuts:not([hidden]), #command-palette[open]')) return;
+    const command = (event.ctrlKey || event.metaKey) && !event.altKey;
+    // Ctrl J / Cmd J works everywhere: open the chat, move focus to it, or close it when it has focus.
+    if (command && !event.shiftKey && event.key.toLowerCase() === 'j') {
+      event.preventDefault();
+      event.stopPropagation();
+      if (panel.hidden) open();
+      else if (panel.contains(document.activeElement)) close();
+      else input.focus({preventScroll: true});
+      return;
+    }
+    // Ctrl Shift Enter / Cmd Shift Enter: full size on or off.
+    if (command && event.shiftKey && event.key === 'Enter') {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleFull();
+      return;
+    }
+    if (!panel.hidden && panel.contains(event.target)) {
+      if (event.target === input && event.key === 'ArrowUp' && !input.value && !command) {
+        const text = lastQuestion();
+        if (text) {
+          event.preventDefault();
+          event.stopPropagation();
+          input.value = text;
+          input.setSelectionRange(text.length, text.length);
+          renderControls();
+          return;
+        }
+      }
+      if (event.key === 'PageUp' || event.key === 'PageDown') {
+        event.preventDefault();
+        event.stopPropagation();
+        scroll.scrollBy({top: (event.key === 'PageUp' ? -0.85 : 0.85) * scroll.clientHeight});
+        return;
+      }
+      if (command && (event.key === 'Home' || event.key === 'End')) {
+        event.preventDefault();
+        event.stopPropagation();
+        scroll.scrollTop = event.key === 'Home' ? 0 : scroll.scrollHeight;
+        return;
+      }
+      if (command && event.shiftKey && event.key === 'Backspace') {
+        event.preventDefault();
+        event.stopPropagation();
+        clear.click();
+        return;
+      }
+    }
     if (!panel.hidden && event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
@@ -434,5 +521,8 @@ const renderChat = (() => {
   }, true);
 
   render();
+  // Used by the command palette.
+  globalThis.changeChat = {open, close, toggleFull, clear: () => clear.click(), isOpen: () => !panel.hidden,
+    isFull: () => panel.classList.contains('full')};
   return render;
 })();

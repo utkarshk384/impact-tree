@@ -1,5 +1,7 @@
 # Change Tree
 
+<img src="docs/logo.svg" alt="A mint-green change node branching into two dependency nodes" width="96" height="96">
+
 Change Tree is a skill for Claude Code and Codex that opens a local, interactive view of a Git comparison. It ranks changed files by dependency reach, change type and size. Open a card to see the diff and AI summaries for the file and each change block. You can edit diff blocks in the current working tree.
 
 ## Install

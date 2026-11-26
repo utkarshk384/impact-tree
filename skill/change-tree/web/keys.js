@@ -12,6 +12,7 @@ const SHORTCUTS = [
     ['o', 'Go to the overview'],
     ['f', 'Fit the tree'],
     ['c', 'Open change chat or focus its input'],
+    ['Ctrl J  ⌘ J', 'Open, focus or close the change chat (works everywhere)'],
     ['Esc', 'Close the open panel'],
   ]],
   ['Impact tree', [
@@ -41,6 +42,16 @@ const SHORTCUTS = [
     ['Enter', 'Run the selected result'],
     ['>  @  :', 'Search actions, find change blocks, or go to a line'],
     ['Esc', 'Close the palette and restore focus'],
+  ]],
+  ['Change chat', [
+    ['Enter', 'Send the question'],
+    ['Shift Enter', 'New line'],
+    ['↑', 'Bring back the last question (empty input)'],
+    ['Ctrl ⇧ Enter  ⌘ ⇧ Enter', 'Full size on or off'],
+    ['PageUp  /  PageDown', 'Scroll the conversation'],
+    ['Ctrl Home  /  Ctrl End', 'First / last message'],
+    ['Ctrl ⇧ Backspace', 'Clear the conversation'],
+    ['Esc', 'Close the chat'],
   ]],
   ['Compare picker', [
     ['↓  /  ↑', 'Move through the results'],

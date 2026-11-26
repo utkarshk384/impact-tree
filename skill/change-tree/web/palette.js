@@ -222,6 +222,9 @@ const {toggleCommandPalette, commandPaletteKeys} = (() => {
       fileCommand('edit', 'Edit file', 'e'),
       file && command('copy', 'Copy file path', () => copyPath(file.path)),
       fileCommand('back', 'Back to tree', 'b / Esc'),
+      globalThis.changeChat && command('chat', changeChat.isOpen() ? 'Focus change chat' : 'Open change chat', () => changeChat.open(), 'c / Ctrl J'),
+      globalThis.changeChat && command('chat-full', changeChat.isFull() ? 'Normal size chat' : 'Full size chat', () => changeChat.toggleFull(), 'Ctrl ⇧ Enter'),
+      globalThis.changeChat && (state.chat || []).length && command('chat-clear', 'Clear change chat', () => { changeChat.open(); changeChat.clear(); }),
       command('settings', 'Summary agent settings…', () => agentPanel.hidden ? openAgentSettings() : $('agent-model').focus()),
       command('shortcuts', 'Keyboard shortcuts', () => help.hidden ? openHelp() : help.querySelector('button').focus(), '?'),
     ].filter(Boolean);
