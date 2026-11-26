@@ -4,7 +4,7 @@
 const SHORTCUTS = [
   ['Anywhere', [
     ['?', 'Show these shortcuts'],
-    ['Ctrl K  ⌘ K', 'Open or close the compare picker (works everywhere)'],
+    ['Ctrl K  ⌘ K', 'Open or close the compare picker. The open file stays open.'],
     ['/', 'Open the compare picker'],
     ['1  /  2', 'Impact view / Directory view'],
     ['j  /  k', 'Focus the next / previous file in review order'],
@@ -66,6 +66,17 @@ helpButton.innerHTML = '<kbd>?</kbd>';
 document.querySelector('.overview-button')?.before(helpButton);
 
 let helpReturn = null;
+let pickerReturn = null;
+
+// After Ctrl K / Cmd K, closing the picker puts focus back where it was (for example in the file view).
+const closePickerBefore = closePicker;
+closePicker = (restoreFocus = true) => {
+  const target = pickerReturn;
+  pickerReturn = null;
+  const back = restoreFocus && target?.isConnected && !target.closest('[hidden], [inert]');
+  closePickerBefore(restoreFocus && !back);
+  if (back) target.focus({preventScroll: true});
+};
 function openHelp() {
   helpReturn = document.activeElement;
   help.hidden = false;
@@ -329,7 +340,8 @@ document.addEventListener('keydown', (event) => {
     event.preventDefault();
     if (draft) closePicker();
     else {
-      if (selected) closeFile();
+      // Keep the file view open. The picker opens on top of it.
+      pickerReturn = document.activeElement;
       openPicker();
     }
     return;
