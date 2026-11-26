@@ -15,7 +15,7 @@ from threading import Condition, Lock, Thread
 from urllib.parse import urlsplit
 
 from edits import CHANGED, EditError, save_file
-from repo import ChangeTreeError, git, refs
+from repo import ChangeTreeError, decode, git, refs
 
 
 WEB = Path(__file__).resolve().parents[1] / "web"
@@ -27,6 +27,8 @@ ASSETS = {"/": ("index.html", "text/html"), "/styles.css": ("styles.css", "text/
           "/review.js": ("review.js", "text/javascript"), "/chat.js": ("chat.js", "text/javascript")}
 MAX_REQUEST = 6_000_000
 MAX_EXPAND_LINES = 20_000
+DIRECTORY_PATH_LIMIT = 5_000
+MAX_PREVIEW_BYTES = 2_000_000
 
 
 def json_bytes(data):
@@ -192,6 +194,7 @@ class State:
         self.cache = cache or repo_cache(root)
         self.changed = Condition()
         self.operations = Lock()
+        self.directory_cache = None
         self.sequence = 0
         self.result = {"repo": root.name, "comparison": {}, "files": [], "layout": {}, "error": None,
                        "refs": {}, "snapshot": None, "loading": True, "summaries": {},
@@ -322,13 +325,80 @@ class State:
                     comparison["description"] = f"Three-dot diff · merge base {comparison['diffBase'][:7]} → {label}"
             return self.publish(result)
 
+    def directory_paths(self, snapshot=None):
+        with self.operations:
+            current = self.result
+            if snapshot is not None and snapshot != current["snapshot"]:
+                raise EditError(CHANGED, 409)
+            if current["loading"] or current["error"]:
+                raise EditError("Choose a comparison to list its files.", 409)
+            if self.directory_cache and self.directory_cache["snapshot"] == current["snapshot"]:
+                return self.directory_cache
+            comp = current["comparison"]
+            try:
+                if comp["head"] == "WORKTREE":
+                    raw = git(Path(comp["target"]), "ls-files", "--cached", "--others", "--exclude-standard",
+                              "--deduplicate", "-z", timeout=15)
+                else:
+                    raw = git(self.root, "ls-tree", "-rz", "--name-only", comp["headCommit"], timeout=15)
+            except (ChangeTreeError, subprocess.TimeoutExpired) as error:
+                raise EditError("Could not list the files in the comparison target.", 500) from error
+            paths = []
+            start = 0
+            while start < len(raw) and len(paths) < DIRECTORY_PATH_LIMIT:
+                end = raw.index(b"\0", start)
+                paths.append(decode(raw[start:end]))
+                start = end + 1
+            self.directory_cache = {"snapshot": current["snapshot"], "limit": DIRECTORY_PATH_LIMIT,
+                                    "paths": paths, "truncated": start < len(raw)}
+            return self.directory_cache
+
+    def worktree_file(self, comp, name, *, allow_links=True):
+        target = Path(comp["target"]).resolve()
+        candidate = target / name
+        try:
+            path = candidate.resolve()
+        except (OSError, RuntimeError) as error:
+            raise EditError("Could not read the file in the compared worktree.", 404) from error
+        if target not in path.parents or not path.is_file():
+            raise EditError("The file is outside the compared worktree.", 404)
+        if not allow_links and path != candidate:
+            raise EditError("Symbolic links have no working tree preview.", 404)
+        return path
+
+    def unchanged_text(self, current, name):
+        listing = self.directory_paths(current["snapshot"])
+        if name not in listing["paths"]:
+            raise EditError("This file is outside the comparison's file list.", 404)
+        comp = current["comparison"]
+        try:
+            if comp["head"] == "WORKTREE":
+                path = self.worktree_file(comp, name, allow_links=False)
+                size = path.stat().st_size
+            else:
+                size = int(git(self.root, "cat-file", "-s", f"{comp['headCommit']}:{name}"))
+            if size > MAX_PREVIEW_BYTES:
+                raise EditError("This file is too large to preview.", 413)
+            if comp["head"] == "WORKTREE":
+                data = path.read_bytes()[:MAX_PREVIEW_BYTES + 1]
+            else:
+                data = git(self.root, "cat-file", "blob", f"{comp['headCommit']}:{name}")
+        except (ChangeTreeError, OSError, ValueError) as error:
+            raise EditError("Could not read the file in the comparison target.", 404) from error
+        if b"\0" in data:
+            raise EditError("Binary files have no text preview.", 415)
+        return {"text": decode(data)}
+
     def lines(self, body):
-        """Return unchanged lines of a changed file's new version, so the page can expand diff gaps."""
+        """Return diff context lines or the full text of an unchanged file."""
         current = self.get()
         comp = current["comparison"]
-        if body.get("snapshot") != current["snapshot"]:
+        if not current["snapshot"] or body.get("snapshot") != current["snapshot"]:
             raise EditError(CHANGED, 409)
-        file = next((file for file in current["files"] if file["path"] == body.get("path")), None)
+        name = body.get("path")
+        file = next((file for file in current["files"] if file["path"] == name), None)
+        if body.get("full") is True and file is None and isinstance(name, str):
+            return self.unchanged_text(current, name)
         if file is None or file["status"] == "D" or file.get("binary"):
             raise EditError("This file has no unchanged lines to show.", 404)
         start, end = body.get("start"), body.get("end")
@@ -337,13 +407,9 @@ class State:
         end = min(end, start + MAX_EXPAND_LINES - 1)
         try:
             if comp.get("mode") == "worktree":
-                target = Path(comp["target"]).resolve()
-                path = (target / file["path"]).resolve()
-                if target not in path.parents or not path.is_file():
-                    raise EditError("The file is outside the compared worktree.", 404)
-                data = path.read_bytes()
+                data = self.worktree_file(comp, name).read_bytes()
             else:
-                data = git(self.root, "cat-file", "blob", f"{comp['headCommit']}:{file['path']}")
+                data = git(self.root, "cat-file", "blob", f"{comp['headCommit']}:{name}")
         except ChangeTreeError as error:
             raise EditError(f"Could not read the file. {public_error(error)}", 404) from error
         text = data.decode("utf-8", errors="replace").splitlines()
@@ -446,6 +512,13 @@ class Handler(BaseHTTPRequestHandler):
             self.send_bytes(200, kind, payload)
         elif path == "/api/state":
             self.json(200, self.server.state.get())
+        elif path == "/api/paths":
+            try:
+                self.json(200, self.server.state.directory_paths())
+            except EditError as error:
+                self.json(error.status, {"error": str(error)})
+            except OSError as error:
+                self.json(500, {"error": public_error(error)})
         elif path == "/api/ping":
             self.json(200, {"ok": True})
         elif path == "/api/events":

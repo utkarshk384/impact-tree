@@ -10,7 +10,7 @@ from unittest.mock import patch
 from test_analysis import GitRepoMixin
 import ct
 from jobs import Jobs, request, submit, wait
-from repo import ChangeTreeError, WORKTREE_EDITING_SUPPORTED
+from repo import ChangeTreeError
 from server import Server, State, read_json, write_json
 
 
@@ -273,8 +273,6 @@ class JobsFixture(GitRepoMixin, unittest.TestCase):
         self.assertEqual(reopened["summaryStatus"], "complete", reopened.get("error"))
         self.no_job()
 
-        if not WORKTREE_EDITING_SUPPORTED:
-            return
         file = self.state.get()["files"][0]
         saved = self.state.save({"snapshot": start["snapshot"], "hash": file["contentHash"], "path": file["path"],
                                  "edits": [{"index": 0, "text": "SETTING = 2"}]})

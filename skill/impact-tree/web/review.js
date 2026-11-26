@@ -20,9 +20,9 @@ function diffHash(file) {
 
 function viewedStore() {
   try {
-    return JSON.parse(localStorage.getItem(viewedKey()) || '{}');
+    return Object.assign(Object.create(null), JSON.parse(localStorage.getItem(viewedKey()) || '{}'));
   } catch {
-    return {};
+    return Object.create(null);
   }
 }
 
@@ -30,10 +30,12 @@ function isViewed(file, store = viewedStore()) {
   return Boolean(file) && store[file.path] === diffHash(file);
 }
 
-function setViewed(file, value) {
+function setViewed(files, value) {
   const store = viewedStore();
-  if (value) store[file.path] = diffHash(file);
-  else delete store[file.path];
+  for (const file of Array.isArray(files) ? files : [files]) {
+    if (value) store[file.path] = diffHash(file);
+    else delete store[file.path];
+  }
   try {
     if (Object.keys(store).length) localStorage.setItem(viewedKey(), JSON.stringify(store));
     else localStorage.removeItem(viewedKey());
@@ -55,8 +57,19 @@ function applyViewed() {
     if (element.matches('.dir-row[data-action="folder"]')) continue;
     element.classList.toggle('viewed', viewed.has(element.dataset.path));
   }
+  for (const checkbox of document.querySelectorAll('#workspace .dir-check')) {
+    const {path, action} = checkbox.previousElementSibling.dataset;
+    if (action === 'folder') {
+      const files = directoryFolders.get(path).changes;
+      const count = files.reduce((sum, file) => sum + Number(viewed.has(file.path)), 0);
+      checkbox.checked = count > 0 && count === files.length;
+      checkbox.indeterminate = count > 0 && count < files.length;
+    } else {
+      checkbox.checked = viewed.has(path);
+    }
+  }
   // Progress line under the title of the tree and the directory view.
-  const title = document.querySelector('#workspace .map-title');
+  const title = document.querySelector('#workspace :is(.map-title, .directory-title)');
   if (title && state.files.length) {
     let progress = title.querySelector('.viewed-progress');
     if (!progress) {
@@ -76,6 +89,7 @@ function applyViewed() {
 }
 
 function addViewedButton() {
+  if (!selectedFile()) return;
   const toolbar = document.querySelector('#file-dialog .diff-toolbar');
   if (!toolbar || toolbar.querySelector('[data-review="viewed"]')) return;
   const button = document.createElement('button');
@@ -91,6 +105,13 @@ function addViewedButton() {
 
 document.addEventListener('click', (event) => {
   if (event.target.closest('[data-review="viewed"]')) toggleViewed();
+});
+document.addEventListener('change', (event) => {
+  const checkbox = event.target.closest('#workspace .dir-check');
+  if (!checkbox) return;
+  const {path, action} = checkbox.previousElementSibling.dataset;
+  if (action === 'folder') setViewed(directoryFolders.get(path).changes, checkbox.checked);
+  else setViewed(state.files.find((file) => file.path === path), checkbox.checked);
 });
 
 // ---- Match highlights ---------------------------------------------------------------------
@@ -220,7 +241,7 @@ renderOverview = (...args) => {
 document.addEventListener('keydown', (event) => {
   if (event.metaKey || event.ctrlKey || event.altKey || !selected || draft || busy) return;
   if (event.target.matches?.('input, textarea, select')) return;
-  if (event.key === 'v') {
+  if (event.key === 'v' && selectedFile()) {
     event.preventDefault();
     event.stopImmediatePropagation();
     toggleViewed();

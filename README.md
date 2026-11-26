@@ -58,7 +58,7 @@ Use the same arguments when you invoke the skill in Codex or run the standalone 
 - Git and the `graphify` command on your `PATH`. [Install Graphify](https://github.com/Graphify-Labs/graphify#install).
 - GitHub CLI (`gh`) with an active login, if you want the pull request picker
 
-Windows PowerShell supports comparisons, the dependency tree, summaries, and change chat. In-browser edits are available on macOS and Linux.
+Windows PowerShell supports comparisons, the dependency tree, summaries, change chat, and in-browser edits.
 
 ### Install from the repository marketplace
 
@@ -114,7 +114,13 @@ Use `py -3` in PowerShell if you use the Windows Python launcher. The installer 
 
 Use the bars between change blocks to show unchanged lines. Press `C` to open **Change chat**. The chat can include the current file, the change block, or selected text as context.
 
-### Edit a change on macOS or Linux
+### Browse files in Directory
+
+- Click a folder to open or close it. Use `Cmd`+click on macOS or `Ctrl`+click on Windows and Linux to open or close its subfolders too.
+- Use the **Viewed** column to mark changed files. A folder checkbox marks or clears every changed file beneath it and shows a mixed state when only some are viewed. Marks are saved for the comparison and clear for a file when its diff changes.
+- Turn on **Show unchanged files** to include the compared commit's file tree or the working tree's tracked and non-ignored untracked files. This option starts off and remembers your choice. Open a dimmed file to read its text in a read-only view. Folder counts reflect changed files. The directory can list up to 5,000 repository paths and always includes every changed file.
+
+### Edit a change
 
 1. Choose **Working tree** as the comparison target.
 2. Open the file you want to edit.
@@ -122,7 +128,7 @@ Use the bars between change blocks to show unchanged lines. Press `C` to open **
 4. Change the text in the diff blocks.
 5. Select **Save to file**.
 
-Impact Tree writes the edits to disk without staging them. It shows a read-only diff for comparisons with a commit or a different worktree.
+Impact Tree writes the edits to disk without staging them and preserves the file's line endings. It shows a read-only diff for comparisons with a commit or a different worktree. On Windows, another program can block a save while it has the file open. Close the file in that program and try again.
 
 ### Keyboard shortcuts
 
@@ -132,6 +138,8 @@ Impact Tree writes the edits to disk without staging them. It shows a read-only 
 | Open the command palette | `Ctrl+K` or `Cmd+K` |
 | Open the comparison picker | `/` |
 | Switch between Impact and Directory | `1` or `2` |
+| Expand or collapse a directory folder and all its subfolders | `Shift+→` or `Shift+←` |
+| Toggle viewed for a focused file or directory folder | `V` |
 | Fit the tree to the canvas | `F` |
 | Open or close Change chat | `Ctrl+J` or `Cmd+J` |
 

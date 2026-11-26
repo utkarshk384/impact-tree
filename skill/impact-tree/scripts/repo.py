@@ -8,6 +8,8 @@ import shutil
 import subprocess
 from tempfile import TemporaryDirectory
 
+from edits import EditError, hunk_matches, read_windows_editable, windows_edit_parts
+
 
 class ChangeTreeError(Exception):
     def __init__(self, message, code=1):
@@ -72,8 +74,6 @@ def worktrees(root):
     return result
 
 
-WORKTREE_EDITING_SUPPORTED = os.name != "nt"
-WINDOWS_READ_ONLY = "File editing is unavailable on Windows."
 WORKTREE_PATH_PREFIXES = tuple(
     prefix + separator for prefix in (".", "..", "~") for separator in (os.sep, os.altsep) if separator
 )
@@ -115,10 +115,8 @@ def comparison(root, base, head, task="", pr=None):
         "headLabel": head_label, "baseCommit": base_commit, "headCommit": head_commit,
         "diffBase": diff_base, "mode": "worktree" if is_worktree else "three-dot",
         "description": semantics, "target": str(target),
-        "editable": head == "WORKTREE" and WORKTREE_EDITING_SUPPORTED,
+        "editable": head == "WORKTREE",
     }
-    if head == "WORKTREE" and not WORKTREE_EDITING_SUPPORTED:
-        result["editUnavailable"] = WINDOWS_READ_ONLY
     return result
 
 
@@ -270,28 +268,22 @@ def parse_hunks(file, patch):
 
 def annotate_editable(root, files):
     for file in files:
-        path = root / file["path"]
         if (file["newMode"] not in ("100644", "100755") or file["status"] == "D"
                 or file.get("truncated") or file["binary"] or not file["hunks"]):
             continue
         try:
-            if path.is_symlink() or path.resolve() != path or not path.is_file() or path.stat().st_size > 8_000_000:
-                continue
-            data = path.read_bytes()
+            if os.name == "nt":
+                _, _, _, data = read_windows_editable(root, windows_edit_parts(file["path"]))
+            else:
+                path = root / file["path"]
+                if path.is_symlink() or path.resolve() != path or not path.is_file() or path.stat().st_size > 8_000_000:
+                    continue
+                data = path.read_bytes()
             lines = data.decode("utf-8").split("\n")
-        except (OSError, UnicodeError, ValueError):
+        except (EditError, OSError, UnicodeError, ValueError):
             continue
         if all(hunk_matches(lines, hunk) for hunk in file["hunks"]):
             file["contentHash"] = hashlib.sha256(data).hexdigest()
-
-
-def hunk_matches(lines, hunk):
-    count = hunk["newCount"]
-    start = hunk["newStart"] - 1 if count else hunk["newStart"]
-    expected = [line["text"] for line in hunk["lines"] if line["kind"] in ("add", "context")]
-    return [line.removesuffix("\r") for line in lines[start:start + count]] == [
-        line.removesuffix("\r") for line in expected
-    ]
 
 
 def refs(root):

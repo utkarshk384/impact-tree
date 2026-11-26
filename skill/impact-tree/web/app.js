@@ -25,6 +25,7 @@ const icons = {
 const tabs = {commits: 'Commits', branches: 'Branches', origins: 'Origins', worktrees: 'Worktrees', prs: 'PRs'};
 const statusWords = {A: 'Added', M: 'Modified', D: 'Deleted'};
 const replacements = {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'};
+const UNCHANGED_KEY = 'change-tree/show-unchanged/v1';
 
 let state = {files: [], refs: {}, comparison: {}, layout: {}, loading: true, summaries: {}};
 let layout = 'impact';
@@ -41,6 +42,16 @@ let saveFailed = false;
 let lastFileButton = null;
 let canvas = null;
 let canvasView = null;
+let showUnchanged = false;
+let directoryListing = null;
+let directoryFolders = new Map();
+let unchangedPreview = null;
+
+try {
+  showUnchanged = localStorage.getItem(UNCHANGED_KEY) === 'true';
+} catch {
+  // Without storage the toggle resets on reload.
+}
 
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => replacements[character]);
 // AI text: escape it, then show `names` as inline code.
@@ -246,57 +257,120 @@ function changedCount() {
   return `${count} ${count === 1 ? 'file' : 'files'} changed`;
 }
 
+async function loadDirectoryListing() {
+  const snapshot = state.snapshot;
+  if (!showUnchanged || !snapshot || state.error || directoryListing?.snapshot === snapshot) return;
+  const listing = {snapshot};
+  directoryListing = listing;
+  try {
+    const response = await fetch('/api/paths');
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Could not list the files.');
+    if (state.snapshot !== snapshot || directoryListing !== listing) return;
+    if (result.snapshot !== snapshot) {
+      directoryListing = null;
+      loadState();
+      return;
+    }
+    Object.assign(listing, result);
+  } catch (error) {
+    listing.error = error.message;
+  }
+  if (layout === 'directory' && showUnchanged && state.snapshot === snapshot && directoryListing === listing) {
+    renderWorkspace();
+  }
+}
+
 function directoryRows() {
-  const root = {name: state.repo, path: '/', folders: new Map(), files: []};
-  for (const file of state.files) {
+  const folder = (name, path) => ({name, path, folders: new Map(), files: [], changes: []});
+  const root = folder(state.repo, '/');
+  directoryFolders = new Map([[root.path, root]]);
+  const files = new Map(state.files.map((file) => [file.path, file]));
+  if (showUnchanged && directoryListing?.snapshot === state.snapshot) {
+    for (const path of directoryListing.paths || []) {
+      if (!files.has(path)) files.set(path, {path, name: path.split('/').pop(), unchanged: true});
+    }
+  }
+  if (!files.size) return '';
+  for (const file of files.values()) {
     let directory = root;
+    if (!file.unchanged) directory.changes.push(file);
     for (const part of file.path.split('/').slice(0, -1)) {
       if (!directory.folders.has(part)) {
-        directory.folders.set(part, {name: part, path: directory.path + part + '/', folders: new Map(), files: []});
+        const child = folder(part, directory.path + part + '/');
+        directory.folders.set(part, child);
+        directoryFolders.set(child.path, child);
       }
       directory = directory.folders.get(part);
+      if (!file.unchanged) directory.changes.push(file);
     }
     directory.files.push(file);
   }
 
-  const descendants = (directory) => [...directory.files, ...[...directory.folders.values()].flatMap(descendants)];
   const byName = (left, right) => left.name.localeCompare(right.name);
+  const checkbox = (label, disabled = false) => `<input type="checkbox" class="dir-check" aria-label="${esc(label)}"
+    aria-keyshortcuts="v" ${disabled ? 'disabled' : ''}>`;
   const guide = (depth, parents, last) => {
-    const x = (index) => 20 + index * 20;
+    const x = (index) => `calc(var(--directory-row-padding) + 6px + ${index} * var(--directory-indent))`;
     const line = (left, top, width, height) =>
-      `<span aria-hidden="true" class="dir-guide" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px"></span>`;
-    return parents.map((draw, index) => draw ? line(x(index), 0, 2, 44) : '').join('') +
-      (depth ? line(x(depth - 1), 0, 2, last ? 22 : 44) + line(x(depth - 1), 21, 12, 2) : '');
+      `<span aria-hidden="true" class="dir-guide" style="left:${left};top:${top}px;width:${width};height:${height}px"></span>`;
+    return parents.map((draw, index) => draw ? line(x(index), 0, '2px', 44) : '').join('') +
+      (depth ? line(x(depth - 1), 0, '2px', last ? 22 : 44) +
+        line(x(depth - 1), 21, 'calc(var(--directory-indent) * .6)', 2) : '');
   };
 
   function visit(item, depth, parents, last) {
-    const indented = `style="padding-left:${depth * 20}px"`;
+    const indented = `style="padding-left:calc(${depth} * var(--directory-indent))"`;
     const guides = guide(depth, parents, last);
+    const path = esc(item.path).replace(/\r/g, '&#13;');
     if (!item.folders) {
-      return `<button type="button" class="dir-row dir-cols" data-action="file" data-path="${esc(item.path)}">
-        ${guides}<span class="dir-name" ${indented}>${glyph(item)}<span class="ellipsis">${esc(item.name)}</span></span>
-        <span class="compact">${counts(item)}</span><span class="compact muted">${item.hunks.length}</span>
-        <span class="dir-impact ${item.band}">${bar(item.score)}</span>
-      </button>`;
+      return `<div class="dir-entry"><button type="button" class="dir-row dir-cols${item.unchanged ? ' unchanged' : ''}"
+        data-action="file" data-path="${path}" title="${path}">
+        ${guides}<span class="dir-name" ${indented}>${item.unchanged ? '<span class="chip chip-letter" aria-hidden="true">·</span>' : glyph(item)}
+          <span class="ellipsis">${esc(item.name)}</span></span>
+        ${item.unchanged ? '' : `<span class="compact">${counts(item)}</span><span class="compact muted">${item.hunks.length}</span>
+          <span class="dir-impact ${item.band}">${bar(item.score)}</span>`}
+      </button>${item.unchanged ? '' : checkbox('Viewed: ' + item.path)}</div>`;
     }
-    const list = descendants(item);
-    const sum = totals(list);
+    const count = item.changes.length;
+    const sum = totals(item.changes);
     const open = !collapsed.has(item.path);
     const children = [...[...item.folders.values()].sort(byName), ...item.files.slice().sort(byName)];
-    return `<button type="button" class="dir-row dir-cols" data-action="folder" data-path="${esc(item.path)}" aria-expanded="${open}">
+    return `<div class="dir-entry"><button type="button" class="dir-row dir-cols${count ? '' : ' no-changes'}"
+      data-action="folder" data-path="${path}" aria-expanded="${open}">
       ${guides}<span class="dir-name" ${indented}><span class="muted">${icon(open ? 'chevron' : 'right')}</span>
       <span class="dir-glyph">${icon('folder', 16)}</span><span class="mono ellipsis">${esc(item.name)}${depth ? '/' : ''}</span>
-      <span class="subtle">${list.length} ${list.length === 1 ? 'file' : 'files'}</span></span>
-      <span class="compact">${counts(sum)}</span><span class="compact muted">${sum.blocks}</span>
-      <span class="dir-highest ${band(sum.score)}">highest <b>${sum.score}</b></span>
-    </button>` + (open ? children.map((child, i) => visit(child, depth + 1, depth ? [...parents, !last] : [], i === children.length - 1)).join('') : '');
+      <span class="subtle">${count} ${count === 1 ? 'file' : 'files'}</span></span>
+      ${count ? `<span class="compact">${counts(sum)}</span><span class="compact muted">${sum.blocks}</span>
+        <span class="dir-highest ${band(sum.score)}">highest <b>${sum.score}</b></span>` : ''}
+    </button>${checkbox('Viewed: changed files in ' + (depth ? item.path.slice(1) : item.name), !count)}</div>` +
+      (open ? children.map((child, i) => visit(child, depth + 1, depth ? [...parents, !last] : [], i === children.length - 1)).join('') : '');
   }
   return visit(root, 0, [], true);
 }
 
+function directoryRow(path, action) {
+  return $('workspace').querySelector(`.dir-row[data-action="${action}"][data-path="${CSS.escape(path)}"]`);
+}
+
+function changeFolder(row, open, recursive = false) {
+  const path = row.dataset.path;
+  function update(folder) {
+    if (open) collapsed.delete(folder.path);
+    else collapsed.add(folder.path);
+    if (recursive) for (const child of folder.folders.values()) update(child);
+  }
+  update(directoryFolders.get(path));
+  renderWorkspace();
+  directoryRow(path, 'folder')?.focus({preventScroll: true});
+}
+
 function renderWorkspace(keepScroll = true) {
   const workspace = $('workspace');
+  workspace.setAttribute('aria-label', layout === 'directory' && showUnchanged ? 'Repository files' : 'Changed files');
   const previous = workspace.querySelector('.directory-list');
+  const active = document.activeElement;
+  const activeEntry = active?.closest('.dir-entry');
   if (canvas) {
     const view = canvas.saveView();
     if (view.key === canvasKey()) canvasView = view;
@@ -304,18 +378,37 @@ function renderWorkspace(keepScroll = true) {
     canvas = null;
   }
   if (canvasView && canvasView.key !== canvasKey()) canvasView = null;
-  if (!state.files.length) {
-    workspace.innerHTML = `<div class="map-title"><div>${layout === 'impact' ? 'Impact tree · trunk on the left, leaves on the right' : 'Directory view · changed files grouped by folder'}</div><h1>${changedCount()}</h1></div>${emptyMessage()}`;
-  } else if (layout === 'impact') {
+  if (layout === 'directory') {
+    const rows = directoryRows();
+    const listing = showUnchanged && directoryListing?.snapshot === state.snapshot ? directoryListing : null;
+    const listingStatus = showUnchanged && state.snapshot && !state.error
+      ? listing?.error || (listing?.truncated ? `Showing up to ${listing.limit.toLocaleString()} repository paths. All changed files are included.`
+        : listing?.paths ? '' : 'Loading repository files…') : '';
+    workspace.innerHTML = `<div class="directory">
+      <div class="directory-header">
+        <div class="directory-title"><div>Directory view</div><h1>${changedCount()}</h1></div>
+        <button type="button" class="pill surface directory-toggle" data-action="show-unchanged" aria-pressed="${showUnchanged}">
+          Show unchanged files
+        </button>
+      </div>
+      ${listingStatus ? `<div class="directory-status muted" role="status">${esc(listingStatus)}</div>` : ''}
+      <div class="directory-list panel">${rows ? `<div class="dir-cols dir-heading">
+        <span>Name</span><span>Lines</span><span>Blocks</span><span>Impact</span><span>Viewed</span></div>${rows}` : emptyMessage()}</div>
+    </div>`;
+    if (keepScroll && previous) workspace.querySelector('.directory-list').scrollTop = previous.scrollTop;
+    if (active?.matches('.directory-toggle')) workspace.querySelector('.directory-toggle').focus({preventScroll: true});
+    else if (activeEntry) {
+      const {path, action} = activeEntry.querySelector('.dir-row').dataset;
+      const row = directoryRow(path, action);
+      const next = active.matches('.dir-check') ? row?.parentElement.querySelector('.dir-check') : row;
+      next?.focus({preventScroll: true});
+    }
+    loadDirectoryListing();
+  } else if (state.files.length) {
     workspace.innerHTML = drawTree();
     canvas = new TreeCanvas(workspace.querySelector('.tree-viewport'), state.layout, state.files, canvasKey(), canvasView);
   } else {
-    workspace.innerHTML = `<div class="directory">
-      <div class="directory-title"><div>Directory view · changed files grouped by folder</div><h1>${changedCount()}</h1></div>
-      <div class="directory-list panel"><div class="dir-cols dir-heading"><span>Name</span><span>Lines</span><span>Blocks</span><span>Impact</span></div>
-      ${directoryRows()}</div>
-    </div>`;
-    if (keepScroll && previous) workspace.querySelector('.directory-list').scrollTop = previous.scrollTop;
+    workspace.innerHTML = `<div class="map-title"><div>Impact tree · trunk on the left, leaves on the right</div><h1>${changedCount()}</h1></div>${emptyMessage()}`;
   }
   workspace.inert = Boolean(selected);
 }
@@ -577,11 +670,65 @@ function refreshFileSummaries() {
   }
 }
 
+function renderUnchangedText(preview) {
+  const scroll = $('file-dialog').querySelector('.diff-scroll');
+  if (!scroll) return;
+  if (preview.text) {
+    const pre = document.createElement('pre');
+    const code = document.createElement('code');
+    pre.className = 'file-text';
+    code.textContent = preview.text;
+    pre.append(code);
+    scroll.replaceChildren(pre);
+  } else {
+    const notice = document.createElement('p');
+    notice.className = 'diff-notice';
+    notice.setAttribute('role', 'status');
+    notice.textContent = preview.error || (preview.text === '' ? 'This file is empty.' : 'Loading file…');
+    scroll.replaceChildren(notice);
+  }
+}
+
+function renderUnchangedFile(preview, scrollTop) {
+  const dialog = $('file-dialog');
+  const head = state.comparison.headLabel;
+  dialog.innerHTML = `
+    <aside class="file-side panel" aria-label="File details">
+      <button type="button" class="pill surface" data-action="back">${icon('back', 16)} Back to tree</button>
+      <div><h2>${esc(preview.path.split('/').pop())}</h2><div class="file-path compact muted">${esc(preview.path)}</div></div>
+      <div class="subtle">Unchanged in this comparison</div>
+    </aside>
+    <div class="diff-panel panel">
+      <div class="diff-toolbar">
+        <span class="diff-range mono">${esc(head)}</span>
+        <span class="spacer"></span><span class="read-only">${icon('lock')} Read only</span>
+      </div>
+      <div class="diff-scroll" tabindex="0" aria-label="File contents"></div>
+    </div>`;
+  renderUnchangedText(preview);
+  dialog.querySelector('.diff-scroll').scrollTop = scrollTop;
+}
+
+async function loadUnchangedText(preview) {
+  try {
+    const result = await post('lines', {snapshot: preview.snapshot, path: preview.path, full: true});
+    preview.text = result.text;
+  } catch (error) {
+    preview.error = error.message;
+  }
+  if (unchangedPreview === preview) renderUnchangedText(preview);
+}
+
 function renderFile(preserveScroll = false) {
   const dialog = $('file-dialog');
+  dialog.setAttribute('aria-label', unchangedPreview ? 'Unchanged file' : 'File changes');
   const file = selectedFile();
   const scrollTop = preserveScroll ? dialog.querySelector('.diff-scroll')?.scrollTop ?? 0 : 0;
-  dialog.hidden = !file;
+  dialog.hidden = !(file || unchangedPreview);
+  if (unchangedPreview) {
+    renderUnchangedFile(unchangedPreview, scrollTop);
+    return;
+  }
   if (!file) {
     dialog.replaceChildren();
     return;
@@ -654,6 +801,7 @@ function markFile() {
 
 function openFile(path, button) {
   selected = path;
+  unchangedPreview = button?.matches('.dir-row.unchanged') ? {path, snapshot: state.snapshot} : null;
   if (button) lastFileButton = button;
   editing = false;
   saveMessage = '';
@@ -662,15 +810,19 @@ function openFile(path, button) {
   renderFile();
   markFile();
   $('file-dialog').querySelector('[data-action="back"]')?.focus({preventScroll: true});
+  if (unchangedPreview) loadUnchangedText(unchangedPreview);
 }
 
 function closeFile() {
+  const path = selected;
   selected = null;
+  unchangedPreview = null;
   editing = false;
   saveMessage = '';
   renderFile();
   markFile();
-  if (lastFileButton?.isConnected) lastFileButton.focus({preventScroll: true});
+  const button = lastFileButton?.isConnected ? lastFileButton : directoryRow(path, 'file');
+  button?.focus({preventScroll: true});
 }
 
 function pickerButton() {
@@ -793,11 +945,13 @@ function applyState(next, keepScroll = true) {
     canvasView = null;
   }
   state = next;
-  if (selected && !selectedFile()) selected = null;
+  if (unchangedPreview?.snapshot !== state.snapshot || !selected) unchangedPreview = null;
+  if (selected && !selectedFile() && !unchangedPreview) selected = null;
   renderHeader();
   renderWorkspace(keepScroll);
   renderOverview();
   renderFile(keepScroll);
+  markFile();
   renderPicker();
   if (typeof renderChat === 'function') renderChat();
 }
@@ -924,14 +1078,19 @@ document.addEventListener('click', (event) => {
         renderFile(true);
       });
       break;
-    case 'folder': {
-      const path = button.dataset.path;
-      if (collapsed.has(path)) collapsed.delete(path);
-      else collapsed.add(path);
+    case 'show-unchanged':
+      showUnchanged = !showUnchanged;
+      if (showUnchanged && directoryListing?.error) directoryListing = null;
+      try {
+        localStorage.setItem(UNCHANGED_KEY, String(showUnchanged));
+      } catch {
+        // The toggle still applies for this page.
+      }
       renderWorkspace();
-      [...document.querySelectorAll('.dir-row[data-action="folder"]')].find((row) => row.dataset.path === path)?.focus({preventScroll: true});
       break;
-    }
+    case 'folder':
+      changeFolder(button, collapsed.has(button.dataset.path), event.metaKey || event.ctrlKey);
+      break;
     case 'unified':
     case 'split':
       diffView = action;

@@ -187,7 +187,7 @@ const {toggleCommandPalette, commandPaletteKeys} = (() => {
     const fileCommand = (id, title, key) => buttonCommand(id, title, fileDialog.querySelector(`[data-action="${id}"]`), key);
     const treeCommand = (id, title, key) => {
       const button = canvas?.controls.querySelector(`[data-canvas="${id}"]`);
-      return !file && visible(button) && command(id, title, () => {
+      return !selected && visible(button) && command(id, title, () => {
         button.click();
         focusWithoutScroll(canvas.viewport);
       }, key);
@@ -196,9 +196,9 @@ const {toggleCommandPalette, commandPaletteKeys} = (() => {
     return [
       command('compare', 'Choose what to compare…', (origin) => openComparison(false, origin), '/'),
       command('task', 'Edit task summary…', (origin) => openComparison(true, origin)),
-      !file && buttonCommand('impact', 'Impact view', document.querySelector('.layout-toggle [data-action="impact"]'), '1'),
-      !file && buttonCommand('directory', 'Directory view', document.querySelector('.layout-toggle [data-action="directory"]'), '2'),
-      !file && canvas && buttonCommand('links', `${links ? 'Hide' : 'Show'} all dependencies`,
+      !selected && buttonCommand('impact', 'Impact view', document.querySelector('.layout-toggle [data-action="impact"]'), '1'),
+      !selected && buttonCommand('directory', 'Directory view', document.querySelector('.layout-toggle [data-action="directory"]'), '2'),
+      !selected && canvas && buttonCommand('links', `${links ? 'Hide' : 'Show'} all dependencies`,
         document.querySelector('[data-action="links"]'), 'a'),
       treeCommand('fit', 'Fit tree', 'f / 0'),
       treeCommand('in', 'Zoom in', '+'),

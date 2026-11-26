@@ -10,7 +10,7 @@ from unittest.mock import patch
 from test_analysis import GitRepoMixin
 from ct import analyze
 from edits import CHANGED, EditError, save_file
-from repo import WINDOWS_READ_ONLY, WORKTREE_EDITING_SUPPORTED
+from repo import git
 from server import Server, State
 
 
@@ -28,7 +28,6 @@ class ServerFixture(GitRepoMixin, unittest.TestCase):
     def get_file(self):
         return analyze(self.root)["files"][0]
 
-    @unittest.skipUnless(WORKTREE_EDITING_SUPPORTED, "Requires guarded worktree edits")
     def test_save_writes_only_server_owned_range_and_rejects_stale_hash(self):
         file = self.get_file()
         digest = file["contentHash"]
@@ -40,7 +39,6 @@ class ServerFixture(GitRepoMixin, unittest.TestCase):
             save_file(self.root, file, digest, edits)
         self.assertEqual(error.exception.status, 409)
 
-    @unittest.skipUnless(WORKTREE_EDITING_SUPPORTED, "Requires guarded worktree edits")
     def test_rejects_traversal_and_symlinked_parent(self):
         file = self.get_file()
         digest = file["contentHash"]
@@ -51,12 +49,16 @@ class ServerFixture(GitRepoMixin, unittest.TestCase):
             outside = Path(temporary)
             (self.root / "dir" / "sample.py").rename(outside / "sample.py")
             (self.root / "dir").rmdir()
-            (self.root / "dir").symlink_to(outside, target_is_directory=True)
+            try:
+                (self.root / "dir").symlink_to(outside, target_is_directory=True)
+            except OSError as error:
+                if getattr(error, "winerror", None) != 1314:
+                    raise
+                self.skipTest("Windows user cannot create symbolic links")
             with self.assertRaises(EditError):
                 save_file(self.root, file, digest, edits)
             self.assertEqual((outside / "sample.py").read_bytes(), b"first = 10\nsecond = 2\n")
 
-    @unittest.skipUnless(WORKTREE_EDITING_SUPPORTED, "Requires guarded worktree edits")
     def test_multi_hunk_save_preserves_crlf_and_missing_final_newline(self):
         base = [f"line {index}" for index in range(30)]
         self.write("sample.txt", "\r\n".join(base).encode("utf-8"))
@@ -114,6 +116,105 @@ class ServerFixture(GitRepoMixin, unittest.TestCase):
             self.assertEqual(self.request(server, "POST", "/api/lines", {
                 "snapshot": "old", "path": file["path"], "start": 1, "end": 2}, **same_origin)[0], 409)
 
+    def test_directory_paths_for_worktree_obey_git_ignore_rules(self):
+        self.write(".gitignore", "ignored*.txt\n")
+        self.write("ignored-tracked.txt", "still tracked\n")
+        self.run_git("add", "-f", "ignored-tracked.txt")
+        self.write("dir/with [spaces] é.txt", "unchanged\n")
+        self.commit()
+        self.write("untracked/new.txt", "untracked\n")
+        self.write("ignored-untracked.txt", "ignored\n")
+        with self.server() as server:
+            status, result = self.request(server, "GET", "/api/paths")
+            _, state = self.request(server, "GET", "/api/state")
+            self.assertEqual(status, 200)
+            self.assertEqual(result["snapshot"], state["snapshot"])
+            self.assertEqual(set(result["paths"]), {
+                ".gitignore", "dir/sample.py", "dir/with [spaces] é.txt", "ignored-tracked.txt", "untracked/new.txt",
+            })
+            self.assertFalse(result["truncated"])
+            self.assertNotIn("paths", state)
+            self.assertEqual(self.request(server, "GET", "/api/paths", Host="another.test")[0], 403)
+            self.assertEqual(self.request(server, "GET", "/api/paths", Origin="https://another.test")[0], 403)
+            unchanged = {"snapshot": state["snapshot"], "path": "dir/with [spaces] é.txt", "full": True}
+            headers = {"Origin": server.url, "X-Change-Tree-Token": server.token}
+            self.assertEqual(self.request(server, "POST", "/api/lines", unchanged, **headers),
+                             (200, {"text": "unchanged\n"}))
+            self.assertEqual(self.request(server, "POST", "/api/lines", unchanged, Origin=server.url)[0], 403)
+            for path in ("../outside", ".git/config", "ignored-untracked.txt"):
+                with self.subTest(path=path):
+                    self.assertEqual(self.request(server, "POST", "/api/lines", {**unchanged, "path": path},
+                                                  **headers)[0], 404)
+            with patch("server.MAX_PREVIEW_BYTES", 4):
+                self.assertEqual(self.request(server, "POST", "/api/lines", unchanged, **headers)[0], 413)
+
+    def test_directory_paths_and_full_text_use_the_compared_commit(self):
+        contents = "\r\n<head text>\r\n" + "row\r\n" * 20_001 + "x" * 16_001
+        self.write("gone-from-checkout.txt", contents)
+        self.write("image.bin", b"\x00\x01")
+        head = self.commit("Compared head")
+        (self.root / "gone-from-checkout.txt").unlink()
+        self.write("only-on-disk.txt", "not in the commit\n")
+        with self.server() as server:
+            headers = {"Origin": server.url, "X-Change-Tree-Token": server.token}
+            status, state = self.request(server, "POST", "/api/compare", {"base": head, "head": head}, **headers)
+            self.assertEqual(status, 200)
+            self.assertEqual(state["files"], [])
+            status, result = self.request(server, "GET", "/api/paths")
+            self.assertEqual(status, 200)
+            self.assertEqual(result["paths"], ["dir/sample.py", "gone-from-checkout.txt", "image.bin"])
+            request = {"snapshot": state["snapshot"], "path": "gone-from-checkout.txt", "full": True}
+            self.assertEqual(self.request(server, "POST", "/api/lines", request, **headers),
+                             (200, {"text": contents}))
+            self.assertEqual(self.request(server, "POST", "/api/lines", {**request, "snapshot": "old"},
+                                          **headers)[0], 409)
+            self.assertEqual(self.request(server, "POST", "/api/lines", {**request, "path": "image.bin"},
+                                          **headers)[0], 415)
+
+    def test_directory_paths_cap_and_cache_are_scoped_to_snapshot(self):
+        self.write("another.txt", "a tracked file")
+        self.commit()
+        self.write("untracked.txt", "an untracked file")
+        with self.server() as server, patch("server.DIRECTORY_PATH_LIMIT", 2), patch("server.git", wraps=git) as calls:
+            status, result = self.request(server, "GET", "/api/paths")
+            self.assertEqual(status, 200)
+            self.assertTrue(result["truncated"])
+            self.assertEqual(len(result["paths"]), result["limit"])
+            self.assertEqual(self.request(server, "GET", "/api/paths"), (status, result))
+            self.assertEqual(calls.call_count, 1)
+            headers = {"Origin": server.url, "X-Change-Tree-Token": server.token}
+            status, state = self.request(server, "POST", "/api/compare", {"base": "HEAD", "head": "HEAD"}, **headers)
+            self.assertEqual(status, 200)
+            self.assertNotEqual(state["snapshot"], result["snapshot"])
+            status, listing = self.request(server, "GET", "/api/paths")
+            self.assertEqual(status, 200)
+            self.assertEqual(listing["snapshot"], state["snapshot"])
+            self.assertEqual(listing["paths"], ["another.txt", "dir/sample.py"])
+            self.assertFalse(listing["truncated"])
+            self.assertEqual(calls.call_count, 2)
+
+    def test_full_text_does_not_follow_worktree_symlinks(self):
+        file = self.write("unchanged.txt", "original")
+        self.commit()
+        with TemporaryDirectory() as outside, self.server() as server:
+            _, listing = self.request(server, "GET", "/api/paths")
+            self.assertIn("unchanged.txt", listing["paths"])
+            external = Path(outside) / "outside.txt"
+            external.write_text("outside")
+            file.unlink()
+            try:
+                file.symlink_to(external)
+            except OSError as error:
+                if getattr(error, "winerror", None) != 1314:
+                    raise
+                self.skipTest("Windows user cannot create symbolic links")
+            headers = {"Origin": server.url, "X-Change-Tree-Token": server.token}
+            request = {"snapshot": listing["snapshot"], "path": "unchanged.txt", "full": True}
+            self.assertEqual(self.request(server, "POST", "/api/lines", request, **headers)[0], 404)
+            file.unlink()
+            file.symlink_to(self.root / ".git" / "config")
+            self.assertEqual(self.request(server, "POST", "/api/lines", request, **headers)[0], 404)
+
     def test_fork_pull_head_remains_available_after_unlinking(self):
         base = self.run_git("rev-parse", "HEAD").decode().strip()
         head = self.commit("Topic head")
@@ -141,8 +242,7 @@ class ServerFixture(GitRepoMixin, unittest.TestCase):
             self.assertEqual(self.request(server, "POST", "/api/compare", {}, Origin="https://another.test",
                                          **{"X-Change-Tree-Token": server.token})[0], 403)
             _, state = self.request(server, "GET", "/api/state")
-            if not WORKTREE_EDITING_SUPPORTED:
-                return
+            self.assertTrue(state["comparison"]["editable"])
             self.assertEqual(self.request(server, "POST", "/api/save",
                                          {"snapshot": state["snapshot"], "path": "unchanged.py"}, **same_origin)[0], 404)
             file = state["files"][0]
@@ -156,19 +256,6 @@ class ServerFixture(GitRepoMixin, unittest.TestCase):
             self.assertEqual(self.request(server, "POST", "/api/compare",
                                           {"base": "HEAD", "head": "HEAD"}, **same_origin)[0], 200)
             self.assertEqual(self.request(server, "POST", "/api/save", {}, **same_origin)[0], 403)
-
-    def test_windows_review_keeps_the_diff_and_refuses_file_edits(self):
-        with patch("repo.WORKTREE_EDITING_SUPPORTED", False), self.server() as server:
-            headers = {"Origin": server.url, "X-Change-Tree-Token": server.token}
-            status, state = self.request(server, "GET", "/api/state")
-            self.assertEqual(status, 200)
-            self.assertFalse(state["comparison"]["editable"])
-            self.assertEqual(state["comparison"]["editUnavailable"], WINDOWS_READ_ONLY)
-            self.assertEqual(state["files"][0]["path"], "dir/sample.py")
-            self.assertNotIn("contentHash", state["files"][0])
-            status, body = self.request(server, "POST", "/api/save", {}, **headers)
-            self.assertEqual(status, 403)
-            self.assertEqual(body["error"], WINDOWS_READ_ONLY)
 
 
 if __name__ == "__main__":

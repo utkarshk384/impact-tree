@@ -24,6 +24,9 @@ const SHORTCUTS = [
   ['Directory', [
     ['↑  /  ↓', 'Previous / next row'],
     ['→  /  ←', 'Open / close a folder, or go to its parent'],
+    ['Shift →  /  Shift ←', 'Open / close a folder and all its subfolders'],
+    ['Ctrl click  /  ⌘ click', 'Open or close a folder and all its subfolders'],
+    ['v', 'Toggle viewed for the file or all changed files in the folder'],
     ['Home  /  End', 'First / last row'],
   ]],
   ['File view', [
@@ -249,20 +252,30 @@ function pickResult(button) {
 }
 
 function directoryKeys(event, row) {
-  const rows = [...document.querySelectorAll('#workspace .dir-row')];
   const isFolder = row.dataset.action === 'folder';
   const open = row.getAttribute('aria-expanded') === 'true';
   const path = row.dataset.path;
-  const refocus = () => focus(document.querySelector(`#workspace .dir-row[data-path="${CSS.escape(path)}"]`));
+  const key = event.key;
+  if (key === 'v') {
+    row.parentElement.querySelector('.dir-check')?.click();
+    event.preventDefault();
+    return true;
+  }
+  if (isFolder && event.shiftKey && (key === 'ArrowRight' || key === 'ArrowLeft')) {
+    changeFolder(row, key === 'ArrowRight', true);
+    event.preventDefault();
+    return true;
+  }
+  const rows = [...document.querySelectorAll('#workspace .dir-row')];
   if (event.key === 'ArrowDown' || event.key === 'ArrowUp') focus(step(rows, row, event.key === 'ArrowDown' ? 1 : -1));
   else if (event.key === 'Home' || event.key === 'End') focus(rows[event.key === 'Home' ? 0 : rows.length - 1]);
-  else if (event.key === 'ArrowRight' && isFolder && !open) { row.click(); refocus(); }
+  else if (event.key === 'ArrowRight' && isFolder && !open) row.click();
   else if (event.key === 'ArrowRight' && isFolder) focus(step(rows, row, 1));
-  else if (event.key === 'ArrowLeft' && isFolder && open && path !== '/') { row.click(); refocus(); }
+  else if (event.key === 'ArrowLeft' && isFolder && open && path !== '/') row.click();
   else if (event.key === 'ArrowLeft') {
     const parent = isFolder ? path.replace(/[^/]+\/$/, '') : '/' + path.split('/').slice(0, -1).map((part) => part + '/').join('');
     if (parent === path) return false;
-    focus(document.querySelector(`#workspace .dir-row[data-action="folder"][data-path="${CSS.escape(parent)}"]`));
+    focus(directoryRow(parent, 'folder'));
   } else return false;
   event.preventDefault();
   return true;
@@ -318,8 +331,10 @@ function focusFileStart(key) {
 
 function globalKeys(event) {
   const key = event.key;
-  if (event.metaKey || event.ctrlKey || event.altKey || typing(event.target)) return;
-  const row = event.target.closest?.('#workspace .dir-row');
+  if (event.metaKey || event.ctrlKey || event.altKey) return;
+  const fromCheckbox = event.target.matches?.('#workspace .dir-check');
+  if (typing(event.target) && !fromCheckbox) return;
+  const row = event.target.closest?.('#workspace .dir-entry')?.querySelector('.dir-row');
   if (row && directoryKeys(event, row)) return;
   const card = event.target.closest?.('#workspace .tree-card');
   if (card && ARROW[key]) {

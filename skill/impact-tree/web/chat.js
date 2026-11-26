@@ -158,9 +158,10 @@ const renderChat = (() => {
 
   function pageContext() {
     const context = {};
-    if (selected) {
-      context.path = selected;
-      if (contextBlock !== undefined && contextFile === selected) context.block = contextBlock;
+    const path = selectedFile()?.path;
+    if (path) {
+      context.path = path;
+      if (contextBlock !== undefined && contextFile === path) context.block = contextBlock;
     }
     if (selectedText) context.selectedText = selectedText;
     return context;
@@ -182,7 +183,8 @@ const renderChat = (() => {
   }
 
   function renderSuggestions() {
-    const questions = ['Summarize the riskiest change', ...(selected ? [`Why did ${selected} change?`] : []),
+    const file = selectedFile();
+    const questions = ['Summarize the riskiest change', ...(file ? [`Why did ${file.path} change?`] : []),
       'What should I test?'];
     if (suggestions.dataset.questions === JSON.stringify(questions)) return;
     suggestions.dataset.questions = JSON.stringify(questions);
