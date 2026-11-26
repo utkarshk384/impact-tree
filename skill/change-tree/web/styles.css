@@ -525,3 +525,12 @@ b { font-weight: 600; }
   body:not(:has(#file-dialog:not([hidden]))) .chat-launcher { bottom: 68px; }
   body:not(:has(#file-dialog:not([hidden]))) .chat-panel { bottom: 128px; height: min(560px, calc(100dvh - 200px)); }
 }
+
+.fold > summary { display: flex; align-items: center; gap: 10px; min-height: 28px; cursor: pointer; list-style: none; border-radius: 10px; }
+.fold > summary::-webkit-details-marker { display: none; }
+.fold > summary::after { content: ''; flex: none; margin-left: auto; width: 8px; height: 8px; border-right: 2px solid #8b8b8b; border-bottom: 2px solid #8b8b8b; transform: rotate(45deg) translateY(-2px); transition: transform .15s; }
+.fold[open] > summary::after { transform: rotate(-135deg) translateY(-2px); }
+.fold > summary:hover::after { border-color: var(--text); }
+.fold-peek { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #a3a3a3; font-size: 12.5px; }
+.fold[open] .fold-peek { display: none; }
+.fold:not([open]) { padding-block: 10px; }

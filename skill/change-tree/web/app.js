@@ -320,6 +320,27 @@ function renderWorkspace(keepScroll = true) {
   workspace.inert = Boolean(selected);
 }
 
+// Open or closed state of the overview's AI summary and task cards. It is kept across reloads.
+const FOLD_KEY = 'change-tree/overview-folds/v1';
+function foldOpen(name) {
+  try {
+    return JSON.parse(localStorage.getItem(FOLD_KEY) || '{}')[name] !== false;
+  } catch {
+    return true;
+  }
+}
+document.addEventListener('toggle', (event) => {
+  const fold = event.target.closest?.('details[data-fold]');
+  if (!fold) return;
+  try {
+    const folds = JSON.parse(localStorage.getItem(FOLD_KEY) || '{}');
+    folds[fold.dataset.fold] = fold.open;
+    localStorage.setItem(FOLD_KEY, JSON.stringify(folds));
+  } catch {
+    // Without storage the cards still open and close. The state then resets on reload.
+  }
+}, true);
+
 function renderOverview() {
   const overview = $('overview');
   const previous = overview.querySelector('.overview-inner');
@@ -332,9 +353,11 @@ function renderOverview() {
     <div class="muted">This comparison</div>
     <h2>${esc(comparison.headline || (state.loading ? 'Analyzing comparison…' : changedCount()))}</h2>
     ${state.comparison.mode === "three-dot" ? `<div class="subtle">${esc(state.comparison.description)}</div>` : ''}
-    <div class="ai-card"><b class="ai-label">AI summary</b><p>${aiText(summary)}</p></div>
-    ${task ? `<div class="task-card"><b>Task</b><p class="task-text">${esc(task)}</p>
-      <p class="task-fit"><b class="ai-label">Fit with the task:</b> ${aiText(comparison.taskFit || summaryFallback())}</p></div>` :
+    <details class="ai-card fold" data-fold="summary" ${foldOpen('summary') ? 'open' : ''}>
+      <summary><b class="ai-label">AI summary</b><span class="fold-peek">${esc(summary.replace(/`/g, ''))}</span></summary><p>${aiText(summary)}</p></details>
+    ${task ? `<details class="task-card fold" data-fold="task" ${foldOpen('task') ? 'open' : ''}>
+      <summary><b>Task</b><span class="fold-peek">${esc(task)}</span></summary><p class="task-text">${esc(task)}</p>
+      <p class="task-fit"><b class="ai-label">Fit with the task:</b> ${aiText(comparison.taskFit || summaryFallback())}</p></details>` :
     '<button type="button" class="add-task" data-action="task">Add a task summary so the AI can relate these changes to it</button>'}
     <div class="metrics"><div><b>${state.files.length}</b><span class="muted">files</span></div>
       <div><b class="add">+${stats.added}</b><span class="muted">lines added</span></div>
