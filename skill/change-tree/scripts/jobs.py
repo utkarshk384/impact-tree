@@ -100,9 +100,11 @@ def overview_context(plan):
     summaries = plan.summaries.get("files", {})
     context = []
     for file in plan.files:
-        summary = summaries.get(file["path"], {}).get("summary", "")
+        entry = summaries.get(file["path"], {})
+        risks = [entry.get("risk")] + [hunk.get("risk") for hunk in entry.get("hunks", [])]
         context.append({"path": file["path"], "status": file["status"], "score": file["score"],
-                        "summary": summary[:300]})
+                        "summary": entry.get("summary", "")[:300], "why": entry.get("why", "")[:200],
+                        "risks": [item[:200] for item in risks if item][:5]})
     return context
 
 
@@ -135,22 +137,40 @@ def validate_result(kind, files, has_task, result):
     if (set(result) != {"files"} or not isinstance(provided, dict)
             or set(provided) != {file["path"] for file in files}):
         raise EditError("Return a files object keyed by every path in the job.")
+
+    def risk(entry, label):
+        # A risk is optional. Leave it out, or send an empty string, when nothing looks risky.
+        value = entry.get("risk", "")
+        if value in ("", None):
+            return None
+        return text(value, 500, label)
+
     cleaned = {}
     for file in files:
         path = file["path"]
         summary = provided[path]
-        if not isinstance(summary, dict) or set(summary) != {"summary", "hunks"}:
-            raise EditError(f"Return a summary and hunks list for {path}.")
+        if not isinstance(summary, dict) or not {"summary", "why", "hunks"} <= set(summary) <= {"summary", "why", "risk", "hunks"}:
+            raise EditError(f"Return summary, why, hunks and an optional risk for {path}.")
         hunks = summary["hunks"]
         if not isinstance(hunks, list) or len(hunks) != len(file["hunks"]):
             raise EditError(f"Return {len(file['hunks'])} ordered hunk summaries for {path}.")
         sections = []
         for hunk in hunks:
-            if not isinstance(hunk, dict) or set(hunk) != {"title", "summary"}:
-                raise EditError(f"Each hunk in {path} requires a title and summary.")
-            sections.append({"title": text(hunk["title"], 120, "Hunk title"),
-                             "summary": text(hunk["summary"], 750, "Hunk summary")})
-        cleaned[path] = {"summary": text(summary["summary"], 950, "File summary"), "hunks": sections}
+            if not isinstance(hunk, dict) or not {"title", "summary", "why"} <= set(hunk) <= {"title", "summary", "why", "risk"}:
+                raise EditError(f"Each hunk in {path} requires a title, summary and why, and may have a risk.")
+            section = {"title": text(hunk["title"], 120, "Hunk title"),
+                       "summary": text(hunk["summary"], 750, "Hunk summary"),
+                       "why": text(hunk["why"], 500, "Hunk why")}
+            flagged = risk(hunk, "Hunk risk")
+            if flagged:
+                section["risk"] = flagged
+            sections.append(section)
+        entry = {"summary": text(summary["summary"], 950, "File summary"),
+                 "why": text(summary["why"], 600, "File why"), "hunks": sections}
+        flagged = risk(summary, "File risk")
+        if flagged:
+            entry["risk"] = flagged
+        cleaned[path] = entry
     return {"files": cleaned}
 
 

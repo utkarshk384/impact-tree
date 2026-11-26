@@ -80,13 +80,19 @@ Write every title and summary in ASD-STE100 Simplified Technical English. The se
 
 ### Content
 
-For `kind: "files"`, write a summary of each file and of each hunk. Hunks have zero-based indices, old and new ranges, counts of changed lines and a diff excerpt. Some excerpts are cut short. Give each hunk a title of 2 to 6 plain words. Write one or two sentences for each summary. Say what the change does and why it matters to a reviewer. When the job has a task, relate each summary to the task. Say clearly when a change does not seem to relate to the task. Return every file path and one hunk entry for each hunk, in the same order.
+For `kind: "files"`, write three things for each file and for each hunk. Hunks have zero-based indices, old and new ranges, counts of changed lines and a diff excerpt. Some excerpts are cut short.
+
+- `summary`: what the change does, in one or two sentences. Give each hunk a `title` of 2 to 6 plain words.
+- `why`: the likely reason for the change, in one sentence. Use the task, the commit context, names in the code and the other changes in the job as evidence. When the diff does not show the reason, say so with "possibly" or "may": "The change possibly prepares the section for the shared tab window."
+- `risk`: only when something in the change could cause a problem. Name the problem and where it can occur, in one or two sentences. Examples: a removed export that other files may still import, changed behavior for keyboard or screen reader users, a missing null check, a changed default, a deleted test, a security or data-loss concern, a dependency change without a lock file change. Leave `risk` out when you see no concrete problem. Do not write general advice such as "test this well".
+
+When the job has a task, relate each summary to the task. Say clearly when a change does not seem to relate to the task. Return every file path and one hunk entry for each hunk, in the same order.
 
 ```json
-{"files":{"src/Example.tsx":{"summary":"The search results keep keyboard focus after a refresh.","hunks":[{"title":"Keep focus after refresh","summary":"The list moves focus back to the selected result after each update."}]}}}
+{"files":{"src/Example.tsx":{"summary":"The search results keep keyboard focus after a refresh.","why":"Users possibly lost their place in the list after each update.","risk":"The list moves focus on every refresh. This can interrupt a screen reader that reads another part of the page.","hunks":[{"title":"Keep focus after refresh","summary":"The list moves focus back to the selected result after each update.","why":"The old code reset focus to the page body."}]}}}
 ```
 
-For `kind: "comparison"`, the job contains a short list of the completed file summaries. Write a headline and a summary of the whole change in two or three sentences. When the job has a task, add `taskFit`. In `taskFit`, name the files that serve the task and the files that do not seem to relate to it. Do not add `taskFit` when there is no task.
+For `kind: "comparison"`, the job contains a short list of the completed file summaries, with their reasons and risks. Write a headline and a summary of the whole change in two or three sentences. When the files have risks, name the most important one in the summary. When the job has a task, add `taskFit`. In `taskFit`, name the files that serve the task and the files that do not seem to relate to it. Do not add `taskFit` when there is no task.
 
 ```json
 {"comparison":{"headline":"Search results keep keyboard focus","summary":"A refresh of the search results keeps the selected row and the keyboard focus. The empty state tells the reader to use the search field."}}

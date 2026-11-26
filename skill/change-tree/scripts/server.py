@@ -169,6 +169,18 @@ def public_error(error):
     return " ".join(str(error).splitlines()) or "Change Tree could not analyze this comparison."
 
 
+def current_summaries(summaries):
+    """Drop cached summaries from older versions, which have no `why`. Those files are summarized again."""
+    if not isinstance(summaries, dict):
+        return {}
+    files = {path: entry for path, entry in summaries.get("files", {}).items()
+             if isinstance(entry, dict) and "why" in entry}
+    kept = {"files": files} if files else {}
+    if "comparison" in summaries and len(files) == len(summaries.get("files", {})):
+        kept["comparison"] = summaries["comparison"]
+    return kept
+
+
 class State:
     def __init__(self, root, analyze, job_factory=None, cache=None, settings=None, agent="claude"):
         self.root = root
@@ -228,10 +240,10 @@ class State:
         snapshot = hashlib.sha256(json_bytes(result)).hexdigest()
         path = self.comparison_path(snapshot)
         cached = read_json(path, {}) if not result["error"] else {}
-        summaries = cached.get("summaries", {})
+        summaries = current_summaries(cached.get("summaries", {}))
         if previous and previous["snapshot"] != snapshot:
             retained = {file["path"] for file in result["files"] if file["path"] != edited_path}
-            saved = previous["summaries"].get("files", {})
+            saved = current_summaries(previous["summaries"]).get("files", {})
             summaries = {**summaries, "files": {**{path: value for path, value in saved.items() if path in retained},
                                                **summaries.get("files", {})}}
         if not result["error"]:

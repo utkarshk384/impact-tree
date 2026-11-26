@@ -16,6 +16,7 @@ const icons = {
   unified: '<rect x="4" y="4" width="16" height="16" rx="2"></rect><path d="M8 9h8M8 13h8M8 17h5"></path>',
   split: '<rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M12 4v16"></path>',
   gap: '<path d="M8 9l4-4 4 4M8 15l4 4 4-4"></path>',
+  warning: '<path d="M12 4 2.5 20h19z"></path><path d="M12 10v4.5"></path><circle cx="12" cy="17.2" r="0.6"></circle>',
   expandUp: '<path d="M12 19V7M7 12l5-5 5 5"></path><path d="M5 4h14"></path>',
   expandDown: '<path d="M12 5v12M7 12l5 5 5-5"></path><path d="M5 20h14"></path>',
   pull: '<circle cx="6" cy="6" r="2.5"></circle><circle cx="6" cy="18" r="2.5"></circle><circle cx="18" cy="18" r="2.5"></circle><path d="M6 8.5v7M18 15.5V10a3 3 0 0 0-3-3h-4"></path>',
@@ -339,12 +340,34 @@ function renderOverview() {
       <div><b class="add">+${stats.added}</b><span class="muted">lines added</span></div>
       <div><b class="del">−${stats.removed}</b><span class="muted">lines removed</span></div></div>
     ${saveMessage && !selected ? `<div class="diff-feedback" role="status">${esc(saveMessage)}</div>` : ''}
+    ${riskList()}
     ${state.files.length ? `<div class="muted">Review in this order</div><div class="review">${state.files.slice(0, 4).map((file) =>
       `<button type="button" data-action="file" data-path="${esc(file.path)}"><span class="review-score">${file.score}</span>
       <span class="review-detail"><strong title="${esc(file.path)}">${esc(file.cardName)}</strong><span>${esc(file.why)}</span></span></button>`).join('')}</div>` : ''}
   </div>`;
   if (previous) overview.firstElementChild.scrollTop = previous.scrollTop;
   overview.inert = Boolean(selected);
+}
+
+// Every risk the summaries flagged, highest impact first.
+function riskList() {
+  const files = state.summaries.files || {};
+  const items = [];
+  for (const file of state.files) {
+    const entry = files[file.path];
+    if (!entry) continue;
+    if (entry.risk) items.push({file, text: entry.risk, block: 0});
+    (entry.hunks || []).forEach((hunk, index) => {
+      if (hunk.risk) items.push({file, text: hunk.risk, block: index + 1, title: hunk.title});
+    });
+  }
+  if (!items.length) return '';
+  return `<div class="muted">Possible problems · ${items.length}</div><div class="risks">${items.slice(0, 12).map((item) =>
+    `<button type="button" data-action="file" data-path="${esc(item.file.path)}" data-block="${item.block}">
+      <span class="risk-icon" aria-hidden="true">${icon('warning')}</span>
+      <span class="review-detail"><strong title="${esc(item.file.path)}">${esc(item.file.cardName)}${item.title ? ' · ' + esc(item.title) : ''}</strong>
+      <span>${aiText(item.text)}</span></span></button>`).join('')}
+    ${items.length > 12 ? `<span class="muted">${items.length - 12} more in the files</span>` : ''}</div>`;
 }
 
 function hunkRange(hunk) {
@@ -509,6 +532,9 @@ function refreshFileSummaries() {
   if (!file || !$('file-summary')) return;
   const summary = state.summaries.files?.[file.path] || {};
   $('file-summary').innerHTML = aiText(summary.summary || summaryFallback());
+  $('file-why').innerHTML = summary.why ? `<b>Why:</b> ${aiText(summary.why)}` : '';
+  $('file-risk').hidden = !summary.risk;
+  $('file-risk').innerHTML = summary.risk ? `<b>${icon('warning')} Possible problem</b><span>${aiText(summary.risk)}</span>` : '';
   for (const [index, hunk] of file.hunks.entries()) {
     const entry = summary.hunks?.[index];
     const title = entry?.title || hunkRange(hunk);
@@ -516,7 +542,15 @@ function refreshFileSummaries() {
     block.setAttribute('aria-label', `Block ${index + 1}: ${title}`);
     block.querySelector('button').setAttribute('aria-label', `AI summary of change ${index + 1}: ${title}`);
     for (const item of $('file-dialog').querySelectorAll(`[data-hunk-title="${index}"]`)) item.textContent = title;
-    block.querySelector('[data-hunk-summary]').innerHTML = aiText(entry?.summary || summaryFallback());
+    block.querySelector('[data-hunk-summary]').innerHTML = aiText(entry?.summary || summaryFallback()) +
+      (entry?.why ? `<span class="tip-why"><b>Why:</b> ${aiText(entry.why)}</span>` : '') +
+      (entry?.risk ? `<span class="tip-risk"><b>${icon('warning')} Possible problem</b> ${aiText(entry.risk)}</span>` : '');
+    block.classList.toggle('has-risk', Boolean(entry?.risk));
+    const link = $('file-dialog').querySelector(`.blocks [data-block="${index + 1}"]`);
+    if (link) {
+      link.classList.toggle('has-risk', Boolean(entry?.risk));
+      link.title = entry?.risk ? 'Possible problem: ' + entry.risk : '';
+    }
   }
 }
 
@@ -556,7 +590,8 @@ function renderFile(preserveScroll = false) {
           <span>Size <b>${file.impact.size}</b></span></div>
         <div class="meter-reason">${esc(file.why)}</div>
       </div>
-      <div class="ai-card"><b class="ai-label">AI summary · whole file</b><p id="file-summary"></p></div>
+      <div class="ai-card"><b class="ai-label">AI summary · whole file</b><p id="file-summary"></p><p class="ai-why" id="file-why"></p></div>
+      <div class="risk-card" id="file-risk" role="note" hidden></div>
       <section class="used-by" aria-label="Used by"><b>Used by${file.previousImporters?.length ? ' · before deletion' : ''}</b>${usedByTree(file)}</section>
       <div class="blocks-title"><b>Change blocks</b><span>${blockName(file.hunks.length)}</span></div>
       <nav class="blocks" aria-label="Change blocks">${file.hunks.map((hunk, i) => `<a href="#blk-${i + 1}" data-block="${i + 1}">
@@ -851,6 +886,11 @@ document.addEventListener('click', (event) => {
       break;
     case 'file':
       openFile(button.dataset.path, button);
+      if (Number(button.dataset.block) > 0) {
+        const block = $('blk-' + button.dataset.block);
+        block?.scrollIntoView({block: 'start'});
+        block?.querySelector('.block-tip button')?.focus({preventScroll: true});
+      }
       break;
     case 'expand':
       expandGap(Number(button.dataset.gap), button.dataset.direction).catch((error) => {

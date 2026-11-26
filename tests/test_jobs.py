@@ -16,8 +16,9 @@ from server import Server, State, read_json, write_json
 
 def file_result(job):
     return {"files": {
-        file["path"]: {"summary": "This file changes a public setting.",
-                       "hunks": [{"title": "Update setting", "summary": "Updates the task's default value."}
+        file["path"]: {"summary": "This file changes a public setting.", "why": "The task asks for new defaults.",
+                       "hunks": [{"title": "Update setting", "summary": "Updates the task's default value.",
+                                  "why": "The old value was zero."}
                                  for _ in file["hunks"]]}
         for file in job["files"]
     }}
@@ -234,6 +235,30 @@ class JobsFixture(GitRepoMixin, unittest.TestCase):
             save_settings("claude", {"model": "opus", "effort": "max"})
             self.assertEqual(load_settings("codex"), {"model": "gpt-a", "effort": "low"})
             self.assertEqual(load_settings("claude"), {"model": "opus", "effort": "max"})
+
+    def test_reasons_are_required_and_risks_are_optional(self):
+        self.start_jobs(files=1)
+        job = self.next_job()
+        path = job["files"][0]["path"]
+        result = file_result(job)
+        del result["files"][path]["why"]
+        with self.assertRaisesRegex(ChangeTreeError, "summary, why, hunks"):
+            self.done(job, result)
+        result = file_result(job)
+        del result["files"][path]["hunks"][0]["why"]
+        with self.assertRaisesRegex(ChangeTreeError, "title, summary and why"):
+            self.done(job, result)
+        result = file_result(job)
+        result["files"][path]["risk"] = "Other modules may still read the old default; they now get a new value."
+        with self.assertRaisesRegex(ChangeTreeError, "File risk breaks the ASD-STE100"):
+            self.done(job, result)
+        result["files"][path]["risk"] = "Other modules may still read the old default. They now get a new value."
+        result["files"][path]["hunks"][0]["risk"] = ""
+        self.done(job, result)
+        saved = self.state.get()["summaries"]["files"][path]
+        self.assertEqual(saved["risk"], "Other modules may still read the old default. They now get a new value.")
+        self.assertNotIn("risk", saved["hunks"][0])
+        self.assertEqual(saved["hunks"][0]["why"], "The old value was zero.")
 
 
 if __name__ == "__main__":

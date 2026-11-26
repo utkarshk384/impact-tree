@@ -398,3 +398,18 @@ b { font-weight: 600; }
 .viewed-progress { margin-top: 4px; font-size: 12px; color: var(--muted); }
 ::highlight(ct-match) { background-color: #8a6a1f; color: #fff7e0; }
 .match-count { padding: 4px 10px; border-radius: 999px; background: #2a2414; color: #f1d58a; font-size: 11.5px; white-space: nowrap; }
+
+.ai-why { margin: 6px 0 0; color: #b9b1d6; font-size: 12.5px; line-height: 1.55; }
+.ai-why b, .tip-why b { color: #c7b8ff; font-weight: 600; }
+.risk-card { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border-radius: 14px; background: #2a2414; box-shadow: inset 0 0 0 1px #5c4a1c; color: #f1e3bf; font-size: 12.5px; line-height: 1.55; }
+.risk-card[hidden] { display: none; }
+.risk-card b, .tip-risk b { display: inline-flex; align-items: center; gap: 6px; color: #f1c264; font-weight: 600; }
+.tip-why, .tip-risk { display: block; margin-top: 8px; }
+.tip-risk { padding: 8px 10px; border-radius: 10px; background: #2a2414; color: #f1e3bf; }
+.blocks a.has-risk .block-index { background: #3a2f12; color: #f1c264; }
+.blocks a.has-risk .block-detail > span::after { content: ' ⚠'; color: #f1c264; }
+.diff-block.has-risk .block-tip > .info { border-color: #8a6a1f; background: #3a2f12; color: #f1c264; }
+.risks { display: flex; flex-direction: column; gap: 8px; }
+.risks button { display: flex; gap: 12px; align-items: flex-start; padding: 10px 14px; border: 0; border-radius: 14px; background: #241f14; color: var(--text); text-align: left; box-shadow: inset 0 0 0 1px #4a3c18; }
+.risks .risk-icon { color: #f1c264; padding-top: 2px; }
+.risks .review-detail span { color: #d8ccb0; }
