@@ -9,6 +9,8 @@
   <link rel="stylesheet" href="/styles.css">
   <script src="/tree.js" defer></script>
   <script src="/app.js" defer></script>
+  <script src="/keys.js" defer></script>
+  <script src="/settings.js" defer></script>
 </head>
 <body>
   <header class="header">
@@ -25,7 +27,7 @@
       <button type="button" data-action="impact" aria-pressed="true"><span data-icon="tree"></span>Impact</button>
       <button type="button" data-action="directory" aria-pressed="false"><span data-icon="folder"></span>Directory</button>
     </div>
-    <button type="button" class="range-button" data-action="picker" aria-expanded="false" aria-controls="picker">
+    <button type="button" class="range-button" data-action="picker" aria-expanded="false" aria-controls="picker" aria-keyshortcuts="Control+K Meta+K" title="Choose what to compare (Ctrl K / ⌘ K)">
       <span class="muted">Base</span><span class="ref-label" id="base-label">HEAD</span>
       <span data-icon="arrow"></span>
       <span class="muted">Compare</span><span class="ref-label" id="head-label">Working tree</span>
@@ -33,8 +35,31 @@
     </button>
     <span class="spacer"></span>
     <button type="button" class="pill links-button" data-action="links" aria-pressed="true"><span data-icon="links"></span>All dependencies</button>
+    <button type="button" class="pill agent-button" id="agent-button" aria-expanded="false" aria-controls="agent-settings" title="Model and effort of the summary sub-agent">
+      <span class="ai-dot" aria-hidden="true"></span><span id="agent-label">Summary agent</span></button>
     <button type="button" class="pill overview-button" data-action="overview">Overview</button>
   </header>
+
+  <section class="agent-settings" id="agent-settings" role="dialog" aria-labelledby="agent-settings-title" hidden>
+    <h2 id="agent-settings-title">Summary agent</h2>
+    <p class="muted">The agent that runs the skill starts one sub-agent for each summary job. New jobs use these settings. They are saved in <code>~/.config/change-tree/config.json</code>.</p>
+    <label for="agent-model">Model</label>
+    <input id="agent-model" list="agent-models" autocomplete="off" spellcheck="false" placeholder="default">
+    <datalist id="agent-models">
+      <option value="default">Same as the session</option>
+      <option value="haiku"></option><option value="sonnet"></option><option value="opus"></option><option value="fable"></option>
+      <option value="gpt-6.2-sol"></option><option value="gpt-6.2-astra"></option><option value="gpt-6.1-terra"></option>
+    </datalist>
+    <span class="hint">Claude Code: haiku, sonnet, opus or fable. Codex: a model name such as gpt-6.2-sol. "default" uses the session's model.</span>
+    <label for="agent-effort">Effort</label>
+    <select id="agent-effort">
+      <option value="default">Default</option><option value="low">Low</option><option value="medium">Medium</option>
+      <option value="high">High</option><option value="xhigh">Extra high</option><option value="max">Max</option>
+    </select>
+    <div class="agent-footer"><span id="agent-status" role="status"></span>
+      <button type="button" class="pill surface" id="agent-cancel">Cancel</button>
+      <button type="button" class="pill primary" id="agent-save">Save</button></div>
+  </section>
 
   <main id="workspace" aria-label="Changed files"></main>
   <aside class="overview panel" id="overview" aria-label="Overview"></aside>

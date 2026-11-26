@@ -248,7 +248,8 @@ class Jobs:
                 raise EditError("The job could not be written to the Change Tree cache.", 500)
             self.active[active.job_id] = active
             return {"job": {"id": active.job_id, "kind": kind, "path": str(self.job_path(active.job_id)),
-                            "files": len(files), "remaining": len(self.plan.pending)}}
+                            "files": len(files), "remaining": len(self.plan.pending),
+                            "model": self.state.settings["model"], "effort": self.state.settings["effort"]}}
 
     def done(self, body):
         job_id = body.get("jobId")
@@ -318,7 +319,8 @@ def wait(root, seconds):
     job = payload.get("job")
     if not job:
         return 4, "CHANGE_TREE_IDLE"
-    return 0, f"CHANGE_TREE_JOB {job['id']} {job['kind']} {job['path']}"
+    model, effort = job.get("model", "default"), job.get("effort", "default")
+    return 0, f"CHANGE_TREE_JOB {job['id']} {job['kind']} {model} {effort} {job['path']}"
 
 
 def submit(root, job_id, result_path):

@@ -15,6 +15,7 @@ In Claude Code, parse `$ARGUMENTS` from `/change-tree`. In Codex, parse the argu
 - `base` alone: compare `base` with the working tree (`--head WORKTREE`).
 - Nothing: compare `HEAD` with the working tree.
 - `--task "…"`: an optional task summary. Pass it as one argument.
+- `--model <name>` and `--effort <level>`: the model and effort of the summary sub-agents for this run. Effort is one of `low`, `medium`, `high`, `xhigh`, `max`, or `default`. Without these options, the saved settings apply. The user saves settings in the page (the "AI" button in the header) or with `python3 "$ct" config --model <name> --effort <level>`.
 
 Keep the quoting of ref names, paths and task text. Use the checkout where the user started the skill.
 
@@ -28,7 +29,7 @@ Keep the quoting of ref names, paths and task text. Use the checkout where the u
    python3 "$ct" serve --repo "$repo" --base "$base" --head "$head" --task="$task"
    ```
 
-   Leave out `--task` when there is no task.
+   Leave out `--task` when there is no task. Add `--model "$model"` and `--effort "$effort"` only when the user gave them.
 4. Run `python3 "$ct" url --repo "$repo" --wait 30` in the foreground. It prints `CHANGE_TREE_URL <url>`.
    - If the server stops with `CHANGE_TREE_RUNNING <url>`, a server for this repository is already running. Use that URL. Also run the summary loop below, unless another session already runs it.
    - If no URL comes back, read the server's output, report the error and stop.
@@ -40,7 +41,10 @@ The server queues summary jobs. You claim each job and give it to a sub-agent. A
 
 1. Start `python3 "$ct" jobs wait --repo "$repo" --timeout 540` as a background command. The command ends when a job is ready, or after 540 seconds.
 2. When the command ends, read its last line:
-   - `CHANGE_TREE_JOB <job-id> <kind> <job-file>`: start one sub-agent for this job, in the background when your harness allows it. In Claude Code, use the Agent tool with `run_in_background: true`. In Codex, spawn a sub-agent. Use the prompt in "Sub-agent prompt" below. Then go to step 1 immediately. Up to 3 jobs can run at the same time.
+   - `CHANGE_TREE_JOB <job-id> <kind> <model> <effort> <job-file>`: start one sub-agent for this job, in the background when your harness allows it. Use the prompt in "Sub-agent prompt" below. Then go to step 1 immediately. Up to 3 jobs can run at the same time.
+     - In Claude Code, use the Agent tool with `run_in_background: true`. When `<model>` is not `default`, set the tool's `model` to it. When `<effort>` is not `default`, set the tool's `effort` to it. The user configured these values for this skill, so pass them.
+     - In Codex, spawn a sub-agent. Pass `<model>` and `<effort>` (as the reasoning effort) when the spawn tool accepts them.
+     - If your harness does not accept that model or effort, use the session default and tell the user once.
    - `CHANGE_TREE_IDLE`: go to step 1.
    - `CHANGE_TREE_STOPPED`, or exit code 3: the server stopped. Stop the loop and tell the user.
 3. If your harness has no sub-agents, do the job yourself with the "Worker mode" rules, then go to step 1.

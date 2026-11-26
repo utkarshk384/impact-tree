@@ -26,8 +26,12 @@ Use the page's Compare picker to change the refs or task. The skill runs `graphi
 
 Summaries follow ASD-STE100 Simplified Technical English. The server checks every title and summary with the bundled linter (`skill/change-tree/vendor/asd-ste100`, MIT licence, from the asd-ste100 skill) and refuses text that breaks a hard rule, so the sub-agent corrects it.
 
-In the file view, the Used by tree shows every file that reaches the changed file through imports, grouped by folder. Changed files in it open their own diff. The bars between change blocks expand unchanged lines: 20 lines up, 20 lines down, or the whole gap.
+In the file view, the Used by tree shows every file that reaches the changed file through imports, grouped by folder. It is always fully open and is not interactive. Changed files in it carry a "changed" tag. The bars between change blocks expand unchanged lines: 20 lines up, 20 lines down, or the whole gap.
 
 Drag the empty canvas or scroll to pan. Pinch or use Ctrl or Cmd with the mouse wheel to zoom around the pointer. With the canvas focused, the arrow keys pan, `+` and `−` zoom, and `0` fits the tree. Drag a card to move it, Shift-drag to move its subtree, or use Alt and the arrow keys on a focused card. Reset layout restores the automatic positions and fits the tree again.
+
+The whole page works from the keyboard. Press `?` for the list of shortcuts. Ctrl K or ⌘ K opens or closes the compare picker from anywhere.
+
+The AI button in the header sets the model and effort of the summary sub-agents, for example `sonnet` and `high`. The setting is saved in `~/.config/change-tree/config.json` and applies to new jobs. You can also use `ct.py config --model <name> --effort <level>`, or pass `--model` and `--effort` to the skill for one run.
 
 Run the tests with `python3 -m unittest discover -s tests`.

@@ -38,6 +38,8 @@ def main(argv=None):
     serve_parser = subs.add_parser("serve")
     serve_parser.add_argument("--repo", default=".")
     serve_parser.add_argument("--port", type=int, default=0)
+    serve_parser.add_argument("--model", help="summary sub-agent model for this run, or 'default'")
+    serve_parser.add_argument("--effort", help="summary sub-agent effort for this run, or 'default'")
     compare_options(serve_parser)
     jobs_parser = subs.add_parser("jobs")
     jobs_parser.add_argument("--repo", default=".")
@@ -49,6 +51,9 @@ def main(argv=None):
     wait_parser.add_argument("--timeout", type=int, default=540)
     for job_parser in (done_parser, wait_parser):
         job_parser.add_argument("--repo", dest="job_repo", default=None)
+    config_parser = subs.add_parser("config", help="show or save the summary sub-agent's model and effort")
+    config_parser.add_argument("--model")
+    config_parser.add_argument("--effort")
     for name in ("url", "stop"):
         sub = subs.add_parser(name)
         sub.add_argument("--repo", default=".")
@@ -65,6 +70,20 @@ def main(argv=None):
                 return code
             jobs.submit(root, args.job_id, args.result_file)
             print(f"Accepted Change Tree job {args.job_id}")
+            return 0
+        if args.command == "config":
+            from edits import EditError
+            from server import clean_settings, load_settings, settings_path, write_json
+            settings = load_settings()
+            changes = {key: value for key, value in (("model", args.model), ("effort", args.effort)) if value}
+            if changes:
+                try:
+                    settings = clean_settings(changes, settings)
+                except EditError as error:
+                    print(error, file=sys.stderr)
+                    return 2
+                write_json(settings_path(), settings)
+            print(f"model={settings['model']} effort={settings['effort']} ({settings_path()})")
             return 0
         if args.command in ("url", "stop"):
             import time

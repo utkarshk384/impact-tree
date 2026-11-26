@@ -5,6 +5,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import subprocess
 import sys
@@ -18,7 +19,9 @@ from repo import ChangeTreeError, git, refs
 
 WEB = Path(__file__).resolve().parents[1] / "web"
 ASSETS = {"/": ("index.html", "text/html"), "/styles.css": ("styles.css", "text/css"),
-          "/app.js": ("app.js", "text/javascript"), "/tree.js": ("tree.js", "text/javascript")}
+          "/app.js": ("app.js", "text/javascript"), "/tree.js": ("tree.js", "text/javascript"),
+          "/keys.js": ("keys.js", "text/javascript"),
+          "/settings.js": ("settings.js", "text/javascript")}
 MAX_REQUEST = 6_000_000
 MAX_EXPAND_LINES = 20_000
 
@@ -59,6 +62,35 @@ def repo_cache(root):
     return Path.home() / ".cache" / "change-tree" / key
 
 
+EFFORTS = ("default", "low", "medium", "high", "xhigh", "max")
+MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}")
+DEFAULT_SETTINGS = {"model": "default", "effort": "default"}
+
+
+def settings_path():
+    base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    return Path(base) / "change-tree" / "config.json"
+
+
+def clean_settings(values, current=None):
+    """Validate the summary agent's model and effort. Unknown keys are ignored."""
+    settings = dict(current or DEFAULT_SETTINGS)
+    model = values.get("model", settings["model"])
+    effort = values.get("effort", settings["effort"])
+    if not isinstance(model, str) or not (model == "default" or MODEL_NAME.fullmatch(model.strip())):
+        raise EditError("Model must be 'default' or a model name such as sonnet, opus or gpt-6.2-sol.")
+    if effort not in EFFORTS:
+        raise EditError("Effort must be one of: " + ", ".join(EFFORTS) + ".")
+    return {"model": model.strip() or "default", "effort": effort}
+
+
+def load_settings():
+    try:
+        return clean_settings(read_json(settings_path(), {}))
+    except EditError:
+        return dict(DEFAULT_SETTINGS)
+
+
 def server_info_path(root):
     return repo_cache(root) / "server.json"
 
@@ -89,9 +121,10 @@ def public_error(error):
 
 
 class State:
-    def __init__(self, root, analyze, job_factory=None, cache=None):
+    def __init__(self, root, analyze, job_factory=None, cache=None, settings=None):
         self.root = root
         self.analyze = analyze
+        self.settings = dict(settings or DEFAULT_SETTINGS)
         self.cache = cache or repo_cache(root)
         self.changed = Condition()
         self.operations = Lock()
@@ -117,13 +150,23 @@ class State:
 
     def get(self):
         with self.changed:
-            return self.result
+            return {**self.result, "settings": self.settings}
+
+    def update_settings(self, body):
+        settings = clean_settings(body, self.settings)
+        cache_json(settings_path(), settings)
+        with self.changed:
+            self.settings = settings
+            self.notify()
+        return {"settings": settings}
 
     def events(self, sequence):
         with self.changed:
             changed = self.changed.wait_for(lambda: self.sequence != sequence, timeout=15)
             selected = ("snapshot", "summaries", "summaryStatus", "summaryError", "refsReady")
-            return self.sequence, {key: self.result.get(key) for key in selected} if changed else None
+            event = {key: self.result.get(key) for key in selected}
+            event["settings"] = self.settings
+            return self.sequence, event if changed else None
 
     def comparison_path(self, snapshot):
         return self.cache / "comparisons" / (snapshot + ".json")
@@ -355,6 +398,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.json(200, state.compare(self.body()))
             elif path == "/api/save":
                 self.json(200, state.save(self.body()))
+            elif path == "/api/settings":
+                self.json(200, state.update_settings(self.body()))
             elif path == "/api/lines":
                 self.json(200, state.lines(self.body()))
             elif path == "/api/jobs/claim" and state.jobs:
@@ -392,7 +437,11 @@ def serve(root, analyze, args, job_factory=None):
         print(f"CHANGE_TREE_RUNNING {running['url']}", flush=True)
         raise ChangeTreeError(f"Change Tree is already running for this repository at {running['url']}. "
                               "Use that page, or stop it with `ct.py stop`.", 5)
-    state = State(root, analyze, job_factory=job_factory)
+    settings = load_settings()
+    overrides = {key: value for key, value in (("model", args.model), ("effort", args.effort)) if value}
+    if overrides:
+        settings = clean_settings(overrides, settings)
+    state = State(root, analyze, job_factory=job_factory, settings=settings)
     with Server(state, args.port) as server:
         info_path = server_info_path(root)
         write_json(info_path, {"url": server.url, "token": server.token, "pid": os.getpid()})

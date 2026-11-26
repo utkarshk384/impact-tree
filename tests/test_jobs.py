@@ -69,7 +69,9 @@ class JobsFixture(GitRepoMixin, unittest.TestCase):
             code, line = wait(self.root, 4)
             self.assertEqual(code, 0, line)
         self.assertTrue(line.startswith("CHANGE_TREE_JOB "), line)
-        path = Path(line.split(" ", 3)[3])
+        _, _, kind, model, effort, path = line.split(" ", 5)
+        self.assertEqual((model, effort), (self.state.settings["model"], self.state.settings["effort"]))
+        path = Path(path)
         self.assertEqual(path.parent, self.cache / "jobs")
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
         return read_json(path, None)
@@ -191,6 +193,20 @@ class JobsFixture(GitRepoMixin, unittest.TestCase):
         (self.cache / "server.json").unlink()
         with self.assertRaisesRegex(ChangeTreeError, "No Change Tree server"):
             wait(self.root, 0)
+
+    def test_settings_reach_claimed_jobs_and_are_saved(self):
+        self.start_jobs(files=1)
+        config = self.cache / "config-home"
+        with patch.dict("os.environ", {"XDG_CONFIG_HOME": str(config)}):
+            self.assertEqual(self.state.update_settings({"model": "sonnet", "effort": "high"}),
+                             {"settings": {"model": "sonnet", "effort": "high"}})
+            self.assertEqual(read_json(config / "change-tree" / "config.json", {}), {"model": "sonnet", "effort": "high"})
+            with self.assertRaisesRegex(Exception, "Effort must be"):
+                self.state.update_settings({"effort": "extreme"})
+            with self.assertRaisesRegex(Exception, "Model must be"):
+                self.state.update_settings({"model": "bad model; rm"})
+        code, line = wait(self.root, 4)
+        self.assertEqual(line.split(" ")[3:5], ["sonnet", "high"])
 
 
 if __name__ == "__main__":

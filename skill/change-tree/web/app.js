@@ -74,10 +74,9 @@ function usedByTree(file) {
     const name = path.split('/').pop();
     const distance = depth[path];
     const tag = distance === 1 ? 'imports it' : distance ? `via ${distance - 1} ${distance === 2 ? 'file' : 'files'}` : '';
-    const label = `<span class="ub-name">${esc(name)}</span>${tag ? `<span class="ub-tag${distance === 1 ? ' direct' : ''}">${tag}</span>` : ''}`;
-    return changed.has(path)
-      ? `<li><button type="button" class="ub-file changed" data-action="file" data-path="${esc(path)}" title="${esc(path)} · changed in this comparison">${label}</button></li>`
-      : `<li><span class="ub-file" title="${esc(path)}">${label}</span></li>`;
+    const isChanged = changed.has(path);
+    return `<li class="ub-file${isChanged ? ' changed' : ''}" title="${esc(path)}${isChanged ? ' · changed in this comparison' : ''}">
+      <span class="ub-name">${esc(name)}</span>${isChanged ? '<span class="ub-changed">changed</span>' : ''}${tag ? `<span class="ub-tag${distance === 1 ? ' direct' : ''}">${tag}</span>` : ''}</li>`;
   };
   const branch = (node) => {
     const dirs = [...node.dirs.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([name, child]) => {
@@ -87,7 +86,7 @@ function usedByTree(file) {
         label += '/' + next;
         child = grand;
       }
-      return `<li><details open><summary><span class="ub-dir">${esc(label)}/</span></summary><ul>${branch(child)}</ul></details></li>`;
+      return `<li><span class="ub-dir">${esc(label)}/</span><ul>${branch(child)}</ul></li>`;
     });
     const files = node.files.slice().sort((a, b) => (depth[a] - depth[b]) || a.localeCompare(b)).map(leaf);
     return dirs.join('') + files.join('');
@@ -95,7 +94,7 @@ function usedByTree(file) {
   const direct = paths.filter((path) => depth[path] === 1).length;
   const more = paths.length - shown.length;
   return `<p class="used-by-count">${paths.length} ${paths.length === 1 ? 'file' : 'files'} · ${direct} import it directly</p>
-    <ul class="ub-tree" aria-label="Files that use ${esc(file.name)}"><li><details open><summary><span class="ub-dir">${esc(state.repo || 'repository')}/</span></summary><ul>${branch(root)}</ul></details></li></ul>
+    <ul class="ub-tree" aria-label="Files that use ${esc(file.name)}"><li><span class="ub-dir">${esc(state.repo || 'repository')}/</span><ul>${branch(root)}</ul></li></ul>
     ${more > 0 ? `<p class="used-by-count">${more} more not shown</p>` : ''}`;
 }
 const summaryFallback = () => state.summaryError || 'Summarizing…';
