@@ -81,9 +81,29 @@ b { font-weight: 600; }
 .pill:hover:not(:disabled), .segmented button:hover:not(:disabled) { box-shadow: inset 0 0 0 1px #444; }
 
 #workspace { position: fixed; inset: 64px calc(var(--overview-width) + 16px) 0 0; }
-.tree-scroll { height: 100%; overflow: auto; }
-.tree-surface { position: relative; min-width: 100%; min-height: 100%; }
-.tree-drawing { position: absolute; inset: 0 auto auto 0; pointer-events: none; }
+.tree-viewport {
+  position: absolute; inset: 0; overflow: clip; touch-action: none; user-select: none; cursor: grab;
+  background-color: var(--canvas);
+  background-image: radial-gradient(#242424 var(--grid-dot, 1px), transparent var(--grid-dot, 1px));
+  background-size: var(--grid-size, 24px) var(--grid-size, 24px);
+}
+.tree-viewport:focus-visible { outline-offset: -3px; }
+.tree-world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.tree-drawing { position: absolute; inset: 0 auto auto 0; pointer-events: none; overflow: visible; }
+.tree-viewport.dragging, .tree-viewport.dragging .tree-card { cursor: grabbing; }
+.tree-viewport > .map-title { pointer-events: none; }
+.tree-chrome {
+  position: absolute; inset: auto 16px 16px; display: flex; flex-wrap: wrap; align-items: flex-end;
+  justify-content: space-between; gap: 6px 12px; pointer-events: none;
+}
+.tree-controls {
+  display: flex; align-items: center; gap: 2px; margin-left: auto; padding: 4px;
+  border-radius: 999px; background: #1a1a1a; color: #d4d4d4; pointer-events: auto;
+  box-shadow: inset 0 1px 0 #ffffff0d, 0 12px 24px -12px #000; font-size: 12px;
+}
+.tree-controls button { min-width: 30px; min-height: 34px; padding: 0 9px; border-radius: 999px; }
+.tree-controls button:hover:not(:disabled) { background: #303030; }
+.tree-controls output { min-width: 4ch; text-align: center; font: 400 11.5px var(--mono); }
 .map-title { position: absolute; left: 24px; top: 14px; }
 .map-title > div, .directory-title > div { color: var(--subtle); font-size: 12.5px; }
 .tree-label { position: absolute; top: 64px; color: #a3a3a3; font-size: 11.5px; font-weight: 500; white-space: nowrap; }
@@ -106,13 +126,16 @@ b { font-weight: 600; }
 .chip { flex: none; background: var(--chip-bg); color: var(--chip-fg); }
 .chip-letter { width: 18px; height: 18px; border-radius: 6px; display: grid; place-items: center; font: 500 10.5px var(--mono); }
 .tree-card {
-  position: absolute; width: 224px; height: 96px; padding: 0 14px; display: flex; flex-direction: column;
+  position: absolute; left: 0; top: 0; width: 224px; height: 96px; padding: 0 14px; display: flex; flex-direction: column;
   justify-content: center; gap: 9px; text-align: left; border-radius: 16px; background: var(--band-bg); border: 1px solid var(--band-border);
   box-shadow: inset 0 1px 0 #ffffff0f, 0 2px 0 #090909, 0 16px 30px -14px #000;
 }
-.tree-card:hover, .tree-card[aria-pressed="true"] { border-color: #ececec; }
+.tree-card.moving, .tree-card:hover, .tree-card[aria-pressed="true"] { border-color: #ececec; }
+.tree-card.moving { z-index: 1; }
+.tree-ports { z-index: 2; }
 .card-name, .card-stats, .card-impact { display: flex; align-items: center; width: 100%; gap: 8px; }
 .card-name { font-weight: 600; }
+.card-filename { min-width: 0; overflow-wrap: anywhere; line-height: 15px; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .card-stats, .card-impact { padding-left: 26px; }
 .card-stats { justify-content: space-between; color: var(--muted); white-space: nowrap; font: 400 11px var(--mono); }
 .card-impact { gap: 10px; }
@@ -120,7 +143,7 @@ b { font-weight: 600; }
 .impact-bar > span { display: block; height: 100%; border-radius: inherit; background: var(--bar); }
 .impact-number { min-width: 22px; text-align: right; color: var(--band-fg); font: 500 11.5px var(--mono); }
 .legend {
-  position: absolute; left: clamp(24px, calc(100% - 450px), 468px); bottom: 24px; display: flex; align-items: center; gap: 16px; white-space: nowrap;
+  display: flex; align-items: center; gap: 16px; max-width: 100%; flex-wrap: wrap; white-space: nowrap;
   padding: 10px 16px; border-radius: 999px; background: #1a1a1a; box-shadow: inset 0 1px 0 #ffffff0d, 0 12px 24px -12px #000;
   color: #b4b4b4; font-size: 12px;
 }

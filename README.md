@@ -24,4 +24,6 @@ Invoke the skill from a Herdr terminal in the repository you want to review. Use
 
 Use the page's Compare picker to change the refs or task. The skill refreshes Graphify as needed and starts two child terminals in the launcher's Herdr space. One runs the Python server and the other runs a summary subagent of the same type as the launcher. Comparison and summary caches live under `~/.cache/change-tree/`.
 
+Drag the empty canvas or scroll to pan. Pinch or use Ctrl or Cmd with the mouse wheel to zoom around the pointer. With the canvas focused, the arrow keys pan, `+` and `−` zoom, and `0` fits the tree. Drag a card to move it, Shift-drag to move its subtree, or use Alt and the arrow keys on a focused card. Reset layout restores the automatic positions and fits the tree again.
+
 Run the tests with `python3 -m unittest discover -s tests`.

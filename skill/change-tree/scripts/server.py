@@ -18,7 +18,7 @@ from repo import ChangeTreeError, git, refs
 
 WEB = Path(__file__).resolve().parents[1] / "web"
 ASSETS = {"/": ("index.html", "text/html"), "/styles.css": ("styles.css", "text/css"),
-          "/app.js": ("app.js", "text/javascript")}
+          "/app.js": ("app.js", "text/javascript"), "/tree.js": ("tree.js", "text/javascript")}
 MAX_REQUEST = 6_000_000
 
 

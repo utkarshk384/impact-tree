@@ -36,6 +36,8 @@ let queuedUpdate = null;
 let saveMessage = '';
 let saveFailed = false;
 let lastFileButton = null;
+let canvas = null;
+let canvasView = null;
 
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => replacements[character]);
 const icon = (name, size = 14) =>
@@ -121,99 +123,72 @@ const roots = [
 ];
 const pathElement = (line) => `<path d="${line}"></path>`;
 
-function branch(parent, child, offset = 0) {
-  const y = parent.y + 48 + offset;
-  const toY = child.y + 48 + offset;
-  const x = parent.x + 224;
-  const toX = child.x;
-  if (parent.column === child.column) {
-    const gutter = Math.max(138, child.x - 27 - offset);
-    return `M${parent.x} ${y} C${gutter} ${y} ${gutter} ${toY} ${toX} ${toY}`;
-  }
-  if (child.column - parent.column > 1) {
-    // The gap below the labels and above the top row keeps long links visible.
-    const routeY = 146;
-    const firstGap = x + 15 + offset / 2;
-    const lastGap = toX - 15 + offset / 2;
-    return `M${x} ${y} C${firstGap} ${y} ${firstGap} ${y - 16} ${firstGap} ${routeY + 8}
-      Q${firstGap} ${routeY} ${firstGap + 8} ${routeY} H${lastGap - 8}
-      Q${lastGap} ${routeY} ${lastGap} ${routeY + 8}
-      C${lastGap} ${toY - 16} ${lastGap} ${toY} ${toX} ${toY}`;
-  }
-  const middle = (x + toX) / 2;
-  return `M${x} ${y} C${middle} ${y} ${middle} ${toY} ${toX} ${toY}`;
+function canvasKey() {
+  const {target, base, head} = state.comparison;
+  return 'change-tree/layout/v1/' + JSON.stringify([state.repo, target, base, head]);
 }
 
 function drawTree() {
   const map = state.layout;
-  const width = Math.max(440, map.width);
-  const height = Math.max(map.height, map.root.y + 260);
-  let divider = '';
+  const height = map.height - TREE_TOP;
+  let dividers = '';
   let labels = '';
   for (let col = 0; col < map.columns; col++) {
     const last = col === map.columns - 1;
-    const x = 196 + 256 * col;
-    if (col > 0) divider += pathElement(`M${x - 16} 146 V${map.standaloneTop || (height - 28)}`);
-    labels += `<div class="tree-label ${col === 0 ? 'trunk' : last ? 'leaves' : ''}" style="left:${x}px">
-      ${col === 0 ? (last ? 'TRUNK' : 'TRUNK · most depended on') : last ? 'LEAVES · least depended on' : 'BRANCHES'}</div>`;
+    const x = map.trunkX + map.columnStep * col;
+    if (col > 0) dividers += pathElement(`M${x - 60} 146 V${map.treeBottom}`);
+    const label = col === 0 ? (last ? 'TRUNK' : 'TRUNK · most depended on') :
+      last ? 'LEAVES · least depended on' : col === 1 ? 'BRANCHES' : '';
+    if (label) {
+      labels += `<div class="tree-label ${col === 0 ? 'trunk' : last ? 'leaves' : ''}" style="left:${x}px">${label}</div>`;
+    }
   }
   if (map.standaloneTop !== null) {
-    labels += `<div class="tree-label standalone" style="left:196px;top:${map.standaloneTop - 64}px">Standalone · nothing imports these</div>`;
+    labels += `<div class="tree-label standalone" style="left:${map.trunkX}px;top:${map.standaloneTop - TREE_TOP}px">Standalone · nothing imports these</div>`;
   }
-  const primary = [], secondary = [], twigs = [], leaves = [];
-  let rootCount = 0;
-  for (const file of state.files) {
-    const pos = map.positions[file.path];
-    const y = pos.y + 48;
-    const parent = file.parent === null ? null : map.positions[file.parent];
-    if (parent) primary.push(branch(parent, pos));
-    else {
-      const startY = map.root.y + 42 + Math.min(16, (rootCount++ % 9 - 4) * 4);
-      primary.push(`M122 ${startY} C162 ${startY} 156 ${y} ${pos.x} ${y}`);
-    }
-    if (pos.column >= 1 && pos.column === map.columns - 1) {
-      const tipX = pos.x + 217;
-      const tipY = pos.y + 109;
-      twigs.push(`M${tipX - 25} ${tipY - 13} C${tipX - 22} ${tipY - 5} ${tipX - 12} ${tipY - 3} ${tipX - 4} ${tipY}`);
-      leaves.push(`<ellipse cx="${tipX}" cy="${tipY}" rx="5" ry="2.6" transform="rotate(10 ${tipX} ${tipY})"></ellipse>`);
-    }
-    for (const [index, dependency] of file.extraDependencies.entries()) {
-      secondary.push(branch(map.positions[dependency], pos, index % 3 * 7 - 7));
-    }
-  }
-  const drawing = `<svg class="tree-drawing" width="${width}" height="${height - 64}" viewBox="0 64 ${width} ${height - 64}" role="img" aria-label="Branches connect changes to their dependents. Dashed lines show additional dependencies.">
-    <g fill="none" stroke="#2e2e2e" stroke-width="2" stroke-dasharray="2 6">${divider}</g>
-    <g fill="none" stroke="#6e6e6e" stroke-width="2" stroke-linecap="round">
+  const drawing = `<svg class="tree-drawing" width="${map.width}" height="${height}" viewBox="0 ${TREE_TOP} ${map.width} ${height}" aria-hidden="true">
+    <g fill="none" stroke="#2e2e2e" stroke-width="2" stroke-dasharray="2 6">${dividers}</g>
+    <g class="extra-edges" fill="none" stroke="#6e6e6e" stroke-width="2" stroke-linecap="round" stroke-dasharray="4 6" ${links ? '' : 'hidden'}></g>
+    <g fill="none" stroke="#6e6e6e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <g transform="translate(0 ${map.root.y - 408})">${roots.map(pathElement).join('')}</g>
-      ${primary.map(pathElement).join('')}
-      ${twigs.map(pathElement).join('')}
+      <g class="main-edges"></g>
     </g>
-    <g fill="#6e6e6e">${leaves.join('')}</g>
-    <g class="extra-edges" fill="none" stroke="#6e6e6e" stroke-width="2" stroke-dasharray="4 6" ${links ? '' : 'hidden'}>${secondary.map(pathElement).join('')}</g>
   </svg>`;
   const cards = state.files.map((file) => {
     const pos = map.positions[file.path];
-    return `<button type="button" class="tree-card ${file.band}" style="left:${pos.x}px;top:${pos.y - 64}px" data-action="file" data-path="${esc(file.path)}" aria-pressed="${selected === file.path}">
-      <span class="card-name">${glyph(file)}<span class="ellipsis">${esc(shortName(file))}</span></span>
+    const name = file.cardName;
+    return `<button type="button" class="tree-card ${file.band}" style="transform:translate(${pos.x}px,${pos.y - TREE_TOP}px)"
+      data-action="file" data-path="${esc(file.path)}" aria-pressed="${selected === file.path}" title="${esc(file.path)}">
+      <span class="card-name">${glyph(file)}<span class="card-filename">${esc(name)}</span></span>
       <span class="card-stats"><span>${counts(file)}</span><span>${blockName(file.hunks.length)}</span></span>
       <span class="card-impact">${bar(file.score)}</span>
-    </button>
-    <svg class="tree-drawing" viewBox="0 0 10 10" width="10" height="10" style="left:${pos.x - 5}px;top:${pos.y - 21}px" aria-hidden="true">
-      <circle cx="5" cy="5" r="3.5" fill="#0f0f0f" stroke="#7a7a7a" stroke-width="2"></circle>
-    </svg>`;
+    </button>`;
   }).join('');
   const total = totals(state.files);
-  return `<div class="tree-scroll"><div class="tree-surface" style="width:${width}px;height:${height - 64}px">
-    ${drawing}
-    <div class="map-title"><div>Impact tree · trunk on the left, leaves on the right</div><h1>${changedCount()}</h1></div>
-    ${labels}
-    <div class="root" style="left:${map.root.x}px;top:${map.root.y - 64}px"><b>Root</b><span class="root-counts">+${total.added} −${total.removed}</span></div>
-    ${cards}
-    <div class="legend" aria-label="Legend">
-      <span><b class="add">A</b> added</span><span><b style="color:#7aa7ff">M</b> modified</span><span><b class="del">D</b> deleted</span>
-      <span class="bands">Impact <span class="swatch low"></span>low <span class="swatch medium"></span>medium <span class="swatch high"></span>high</span>
+  return `<div class="tree-viewport" tabindex="0" role="region" aria-label="Impact tree canvas" aria-describedby="canvas-instructions">
+    <div class="tree-world">
+      ${drawing}
+      ${labels}
+      <div class="root" style="left:${map.root.x}px;top:${map.root.y - TREE_TOP}px"><b>Root</b><span class="root-counts">+${total.added} −${total.removed}</span></div>
+      ${cards}
+      <svg class="tree-drawing tree-ports" width="${map.width}" height="${height}" viewBox="0 ${TREE_TOP} ${map.width} ${height}" aria-hidden="true"></svg>
     </div>
-  </div></div>`;
+    <div class="map-title"><div>Impact tree · trunk on the left, leaves on the right</div><h1>${changedCount()}</h1></div>
+    <span class="sr-only" id="canvas-instructions">Use arrow keys to pan, plus and minus to zoom, and 0 to fit the tree. Focus a card and use Alt and the arrow keys to move it.</span>
+    <div class="tree-chrome">
+      <div class="legend" aria-label="Legend">
+        <span><b class="add">A</b> added</span><span><b style="color:#7aa7ff">M</b> modified</span><span><b class="del">D</b> deleted</span>
+        <span class="bands">Impact <span class="swatch low"></span>low <span class="swatch medium"></span>medium <span class="swatch high"></span>high</span>
+      </div>
+      <div class="tree-controls" role="group" aria-label="Canvas controls">
+        <button type="button" data-canvas="out" aria-label="Zoom out">−</button>
+        <output aria-label="Zoom level" aria-live="off">100%</output>
+        <button type="button" data-canvas="in" aria-label="Zoom in">+</button>
+        <button type="button" data-canvas="fit" aria-label="Fit tree">Fit</button>
+        <button type="button" data-canvas="reset" aria-label="Reset layout">Reset layout</button>
+      </div>
+    </div>
+  </div>`;
 }
 
 function changedCount() {
@@ -271,23 +246,26 @@ function directoryRows() {
 
 function renderWorkspace(keepScroll = true) {
   const workspace = $('workspace');
-  const selector = layout === 'impact' ? '.tree-scroll' : '.directory-list';
-  const previous = workspace.querySelector(selector);
+  const previous = workspace.querySelector('.directory-list');
+  if (canvas) {
+    const view = canvas.saveView();
+    if (view.key === canvasKey()) canvasView = view;
+    canvas.destroy();
+    canvas = null;
+  }
+  if (canvasView && canvasView.key !== canvasKey()) canvasView = null;
   if (!state.files.length) {
     workspace.innerHTML = `<div class="map-title"><div>${layout === 'impact' ? 'Impact tree · trunk on the left, leaves on the right' : 'Directory view · changed files grouped by folder'}</div><h1>${changedCount()}</h1></div>${emptyMessage()}`;
   } else if (layout === 'impact') {
     workspace.innerHTML = drawTree();
+    canvas = new TreeCanvas(workspace.querySelector('.tree-viewport'), state.layout, state.files, canvasKey(), canvasView);
   } else {
     workspace.innerHTML = `<div class="directory">
       <div class="directory-title"><div>Directory view · changed files grouped by folder</div><h1>${changedCount()}</h1></div>
       <div class="directory-list panel"><div class="dir-cols dir-heading"><span>Name</span><span>Lines</span><span>Blocks</span><span>Impact</span></div>
       ${directoryRows()}</div>
     </div>`;
-  }
-  const next = workspace.querySelector(selector);
-  if (keepScroll && previous && next) {
-    next.scrollTop = previous.scrollTop;
-    next.scrollLeft = previous.scrollLeft;
+    if (keepScroll && previous) workspace.querySelector('.directory-list').scrollTop = previous.scrollTop;
   }
   workspace.inert = Boolean(selected);
 }
@@ -620,6 +598,11 @@ async function post(action, data) {
 }
 
 function applyState(next, keepScroll = true) {
+  if (!keepScroll) {
+    canvas?.destroy();
+    canvas = null;
+    canvasView = null;
+  }
   state = next;
   if (selected && !selectedFile()) selected = null;
   renderHeader();

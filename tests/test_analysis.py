@@ -219,13 +219,14 @@ class ImpactTest(unittest.TestCase):
         layout = impact.place_tree(files, edges)
         pos = layout["positions"]
         self.assertEqual([pos[name]["column"] for name, _ in rows], [0, 1, 1, 2, 0, None, None])
-        self.assertEqual([pos[name]["x"] for name in ("api.ts", "client.ts", "page.ts")], [196, 452, 708])
-        self.assertEqual(pos["isolated.py"]["y"] - pos["api.ts"]["y"], 112)
+        self.assertEqual([pos[name]["x"] for name in ("api.ts", "client.ts", "page.ts")], [196, 540, 884])
+        self.assertEqual(pos["isolated.py"]["band"][0] - pos["api.ts"]["band"][1], 48)
         self.assertGreater(pos["README.md"]["y"], pos["isolated.py"]["y"] + 96)
         page = files[3]
         self.assertEqual(page["parent"], "api.ts")
         self.assertEqual(page["extraDependencies"], ["client.ts", "cycle.ts"])
         self.assertTrue(files[-1]["standalone"])
+        self.assertEqual(pos["README.md"]["y"], pos[".gitignore"]["y"])
 
 
 if __name__ == "__main__":

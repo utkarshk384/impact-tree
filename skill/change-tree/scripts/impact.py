@@ -1,5 +1,5 @@
 """Graph refresh, file-level dependency analysis, and impact layout."""
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
 import json
 import math
 import os
@@ -344,6 +344,84 @@ def score_file(file, distances, type_score, reason, changed, reference):
     )
 
 
+CARD_WIDTH, CARD_HEIGHT = 224, 96
+TRUNK_X, FIRST_ROW_Y = 196, 150
+COLUMN_STEP = CARD_WIDTH + 120
+SIBLING_GAP, SUBTREE_GAP = 24, 48
+SCRIPT_EXTENSION = re.compile(r"\.(?:[cm]?[jt]sx?)$")
+
+
+def card_labels(paths):
+    parts = {path: PurePosixPath(path) for path in paths}
+    stems = Counter(name.stem for name in parts.values())
+    basenames = {name.name for name in parts.values()}
+
+    by_label = defaultdict(list)
+    for path, name in parts.items():
+        shortened = SCRIPT_EXTENSION.sub("", name.name)
+        label = name.name if stems[name.stem] > 1 or shortened in basenames else shortened
+        by_label[label].append(path)
+
+    names = {}
+    for label, group in by_label.items():
+        if len(group) == 1:
+            names[group[0]] = label
+            continue
+
+        suffixes = defaultdict(int)
+        for path in group:
+            segments = parts[path].parts
+            for depth in range(2, len(segments) + 1):
+                suffixes[segments[-depth:]] += 1
+        for path in group:
+            segments = parts[path].parts
+            if len(segments) == 1:
+                names[path] = "./" + label
+                continue
+            depth = next((depth for depth in range(2, len(segments) + 1)
+                          if suffixes[segments[-depth:]] == 1), len(segments))
+            names[path] = "/".join(segments[-depth:])
+    return names
+
+
+def tidy_positions(columns, children):
+    """Pack the main-parent forest into disjoint vertical bands from the leaves up."""
+    heights = {}
+    offsets = {}
+
+    def pack(siblings, gap_for):
+        top = 0
+        result = []
+        for index, path in enumerate(siblings):
+            if index:
+                top += gap_for(siblings[index - 1], path)
+            result.append((path, top))
+            top += heights[path]
+        return result, top
+
+    def sibling_gap(left, right):
+        return SUBTREE_GAP if children.get(left) or children.get(right) else SIBLING_GAP
+
+    for path in sorted(columns, key=columns.get, reverse=True):
+        branch, span = pack(children.get(path, ()), sibling_gap)
+        heights[path] = max(CARD_HEIGHT, span)
+        offsets[path] = branch
+
+    forest, span = pack(children.get(None, ()), sibling_gap)
+    positions = {}
+    pending = [(path, FIRST_ROW_Y + top) for path, top in reversed(forest)]
+    while pending:
+        path, top = pending.pop()
+        column = columns[path]
+        height = heights[path]
+        positions[path] = {
+            "column": column, "x": TRUNK_X + column * COLUMN_STEP,
+            "y": top + (height - CARD_HEIGHT) // 2, "band": [top, top + height],
+        }
+        pending.extend((child, top + offset) for child, offset in reversed(offsets[path]))
+    return positions, span
+
+
 def place_tree(files, edges, dropped_imports=None):
     dropped_imports = dropped_imports or {}
     by_path = {file["path"]: file for file in files}
@@ -371,42 +449,44 @@ def place_tree(files, edges, dropped_imports=None):
     def rank(path):
         return (-by_path[path]["score"], path)
 
-    columns_to_paths = defaultdict(list)
+    placement_columns = {}
+    children = defaultdict(list)
     standalone = []
-    positions = {}
+    labels = card_labels(paths)
+    imported = set().union(*dependencies.values())
     for path in sorted(paths, key=rank):
         file = by_path[path]
         deps = sorted(dependencies[path], key=rank)
         candidates = [dep for dep in deps if representatives[dep] != representatives[path]]
         dropped = dropped_imports.get(path, set())
         parent = next((dep for dep in candidates if dep in dropped), candidates[0] if candidates else None)
-        linked = bool(deps or any(path in others for others in dependencies.values()))
-        is_standalone = category(path) != "code" and not linked and not file["usedBy"]
+        is_standalone = category(path) != "code" and not deps and path not in imported and not file["usedBy"]
         file.update(parent=parent, extraDependencies=[dep for dep in deps if dep != parent],
-                    standalone=is_standalone)
+                    standalone=is_standalone, cardName=labels[path])
         if is_standalone:
             standalone.append(path)
         else:
-            columns_to_paths[columns[representatives[path]]].append(path)
+            placement_columns[path] = columns[representatives[path]]
+            children[parent].append(path)
 
-    row_of = {}
-    for col, ordered in sorted(columns_to_paths.items()):
-        ordered.sort(key=lambda path: (row_of.get(by_path[path]["parent"], 0), *rank(path)))
-        for row, path in enumerate(ordered):
-            row_of[path] = row
-            positions[path] = {"column": col, "x": 196 + col * 256, "y": 150 + row * 112}
+    positions, tree_height = tidy_positions(placement_columns, children)
+    column_count = max(placement_columns.values(), default=-1) + 1
+    grid_width = max(1, column_count)
+    standalone_y = FIRST_ROW_Y + tree_height + (72 if tree_height else 0)
+    for index, path in enumerate(standalone):
+        row, col = divmod(index, grid_width)
+        positions[path] = {"column": None, "x": TRUNK_X + col * COLUMN_STEP,
+                           "y": standalone_y + row * (CARD_HEIGHT + SIBLING_GAP)}
 
-    tallest = max(map(len, columns_to_paths.values()), default=0)
-    standalone_top = 150 + tallest * 112 + (74 if tallest else 0)
-    for row, path in enumerate(standalone):
-        positions[path] = {"column": None, "x": 196, "y": standalone_top + row * 112}
-    bottom = max((position["y"] + 96 for position in positions.values()), default=150)
+    root_y = FIRST_ROW_Y + (max(CARD_HEIGHT, tree_height) - 84) // 2
+    bottom = max((position["y"] + CARD_HEIGHT for position in positions.values()), default=FIRST_ROW_Y)
     return {
-        "positions": positions, "columns": max(columns_to_paths, default=-1) + 1,
-        "root": {"x": 24, "y": min(408, max(156, round((bottom + 150) / 2) - 42))},
-        "standaloneTop": standalone_top - 24 if standalone else None,
-        "width": max((position["x"] + 224 for position in positions.values()), default=420) + 20,
-        "height": max(bottom + 44, 648),
+        "positions": positions, "columns": column_count,
+        "trunkX": TRUNK_X, "columnStep": COLUMN_STEP, "cardWidth": CARD_WIDTH, "cardHeight": CARD_HEIGHT,
+        "root": {"x": 24, "y": root_y}, "treeBottom": FIRST_ROW_Y + tree_height,
+        "standaloneTop": standalone_y - 24 if standalone else None,
+        "width": TRUNK_X + (grid_width - 1) * COLUMN_STEP + CARD_WIDTH + 24,
+        "height": max(bottom + 24, root_y + 244),
     }
 
 
