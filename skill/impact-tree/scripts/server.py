@@ -3,6 +3,7 @@ from contextlib import nullcontext
 import hashlib
 import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import errno
 import json
 import os
 from pathlib import Path
@@ -602,7 +603,14 @@ def serve(root, analyze, args, job_factory=None):
         except EditError as error:
             raise ChangeTreeError(str(error), 2) from error
     state = State(root, analyze, job_factory=job_factory, settings=settings, agent=args.agent)
-    with Server(state, args.port) as server:
+    try:
+        server = Server(state, args.port)
+    except OSError as error:
+        if error.errno in (errno.EADDRINUSE, errno.EACCES, getattr(errno, "WSAEADDRINUSE", None)):
+            raise ChangeTreeError(f"Port {args.port} is in use or not allowed. Choose another port, "
+                                  "or leave out --port to use a free one.", 6) from error
+        raise
+    with server:
         info_path = server_info_path(root)
         write_json(info_path, {"url": server.url, "token": server.token, "pid": os.getpid()})
         os.chmod(info_path, 0o600)

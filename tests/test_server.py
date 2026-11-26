@@ -258,5 +258,31 @@ class ServerFixture(GitRepoMixin, unittest.TestCase):
             self.assertEqual(self.request(server, "POST", "/api/save", {}, **same_origin)[0], 403)
 
 
+class PortTests(unittest.TestCase):
+    def test_port_option_accepts_only_valid_ports(self):
+        import argparse
+        from ct import port_number
+        self.assertEqual(port_number("4747"), 4747)
+        self.assertEqual(port_number("0"), 0)
+        for value in ("70000", "-1", "web"):
+            with self.subTest(value=value), self.assertRaises(argparse.ArgumentTypeError):
+                port_number(value)
+
+    def test_busy_port_gives_a_clear_error(self):
+        import socket
+        from types import SimpleNamespace
+        from repo import ChangeTreeError
+        from server import serve
+        with socket.socket() as busy, TemporaryDirectory() as folder:
+            busy.bind(("127.0.0.1", 0))
+            busy.listen()
+            port = busy.getsockname()[1]
+            args = SimpleNamespace(agent="claude", model=None, effort=None, port=port, base="HEAD", head="WORKTREE", task="")
+            with patch("server.server_info", return_value=None), patch("server.load_settings", return_value={}), \
+                    self.assertRaises(ChangeTreeError) as error:
+                serve(Path(folder), lambda *_: None, args)
+            self.assertIn(f"Port {port} is in use", str(error.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

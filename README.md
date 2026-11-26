@@ -46,6 +46,7 @@ With no arguments, Impact Tree compares `HEAD` with the current working tree. Th
 | `/impact-tree:impact-tree main` | Compare `main` with the current working tree. |
 | `/impact-tree:impact-tree main..topic` | Compare the merge base of `main` and `topic` with `topic`. |
 | `/impact-tree:impact-tree main..topic --task "Apply the cart discount"` | Review the same diff with a task description for the AI summaries. |
+| `/impact-tree:impact-tree main..topic --port 4747` | Serve the page on a fixed local port. Without `--port`, Impact Tree picks a free port. |
 
 Use the same arguments when you invoke the skill in Codex or run the standalone `/impact-tree` command. To change the comparison in the browser, press `/` to open the picker. The picker lists local branches, remote refs, recent commits, and worktrees. It also lists open GitHub pull requests when GitHub CLI can access the repository.
 

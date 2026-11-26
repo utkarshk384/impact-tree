@@ -15,13 +15,14 @@ In Claude Code, parse `$ARGUMENTS` from `/impact-tree:impact-tree` or `/impact-t
 - `base` alone: compare `base` with the working tree (`--head WORKTREE`).
 - Nothing: compare `HEAD` with the working tree.
 - `--task "…"`: an optional task summary. Pass it as one argument.
+- `--port <number>`: the local port for the page, for example `--port 4747`. Accept it also when the user writes it in words, such as "on port 4747". Without it, the server picks a free port.
 - `--model <name>` and `--effort <level>`: the model and effort of the summary sub-agents for this run. Without these options, the saved settings apply. The choices depend on the agent: Claude Code offers `haiku`, `sonnet`, `opus` and `fable`, and Codex offers the models in `~/.codex/models_cache.json`. The user saves settings in the page (the "AI" button in the header) or with `python3 "$ct" config --agent <claude|codex> --model <name> --effort <level>`, which also lists the choices.
 
 Keep the quoting of ref names, paths and task text. Use the checkout where the user started the skill.
 
 ## Start
 
-Use the Python 3.9+ command available in the current shell for every `ct.py` call, including sub-agent calls. In Windows PowerShell, use `python` or `py -3` in place of `python3`. Use `$ct = Join-Path $skillDir 'scripts/ct.py'` in PowerShell, where `$skillDir` is the absolute path to this skill folder. File comparisons on Windows are read-only.
+Use the Python 3.9+ command available in the current shell for every `ct.py` call, including sub-agent calls. In Windows PowerShell, use `python` or `py -3` in place of `python3`. Use `$ct = Join-Path $skillDir 'scripts/ct.py'` in PowerShell, where `$skillDir` is the absolute path to this skill folder.
 
 1. Use the directory that contains this file as `skill_dir`, and set `ct="$skill_dir/scripts/ct.py"`. Run `python3 "$ct" preflight`. Use the printed repository root as `repo`. If the command fails, show its one-line message and stop.
 2. Run `python3 "$ct" graph --repo "$repo"`. If the command fails, show its one-line message and stop. This command only runs `graphify update`. If it tells the user to run `/graphify`, leave that step to the user.
@@ -39,9 +40,10 @@ Use the Python 3.9+ command available in the current shell for every `ct.py` cal
 
    Set `agent` to `claude` in Claude Code and to `codex` in Codex. The page then lists the models of that agent.
 
-   Leave out `--task` when there is no task. Add `--model "$model"` and `--effort "$effort"` only when the user gave them.
+   Leave out `--task` when there is no task. Add `--model "$model"`, `--effort "$effort"` and `--port "$port"` only when the user gave them.
 4. Run `python3 "$ct" url --repo "$repo" --wait 30` in the foreground. It prints `CHANGE_TREE_URL <url>`.
    - If the server stops with `CHANGE_TREE_RUNNING <url>`, a server for this repository is already running. Use that URL. Also run the job loop below, unless another session already runs it.
+   - If the server stops because the port is in use, tell the user and ask for another port, or start again without `--port`.
    - If no URL comes back, read the server's output, report the error and stop.
 5. Open the URL with `Start-Process $url` in Windows PowerShell, `open "<url>"` on macOS, or `xdg-open "<url>"` on Linux. Tell the user the URL. Tell them that the server and the job loop run in the background of this session.
 

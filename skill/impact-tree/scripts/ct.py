@@ -9,6 +9,16 @@ import impact
 import repo
 
 
+def port_number(value):
+    try:
+        number = int(value)
+    except ValueError:
+        number = -1
+    if not 0 <= number <= 65535:
+        raise argparse.ArgumentTypeError(f"invalid port {value!r}: use a number from 1 to 65535")
+    return number
+
+
 def analyze(root, base="HEAD", head="WORKTREE", task="", pr=None):
     comp = repo.comparison(root, base, head, task, pr)
     graph = impact.refresh_graph(Path(comp["target"]))
@@ -37,7 +47,8 @@ def main(argv=None):
             sub.add_argument("--json", action="store_true")
     serve_parser = subs.add_parser("serve")
     serve_parser.add_argument("--repo", default=".")
-    serve_parser.add_argument("--port", type=int, default=0)
+    serve_parser.add_argument("--port", type=port_number, default=0,
+                              help="local port for the page (1-65535); 0 or none picks a free port")
     serve_parser.add_argument("--agent", choices=("claude", "codex"), default="claude",
                               help="the agent that runs the skill; it sets the model list")
     serve_parser.add_argument("--model", help="summary sub-agent model for this run, or 'default'")
