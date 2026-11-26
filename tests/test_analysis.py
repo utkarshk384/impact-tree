@@ -120,6 +120,11 @@ class GitFixture(unittest.TestCase):
         self.assertEqual(files["src/outgoing.css"]["previousImporters"], ["src/base.css"])
         self.assertEqual(files["src/incoming.css"]["usedBy"], ["src/base.css", "src/View.tsx"])
         self.assertEqual(layout["positions"]["src/base.css"]["column"], 1)
+        deleted = files["src/outgoing.css"]
+        self.assertEqual(deleted["parent"], "src/base.css")
+        self.assertEqual(layout["positions"]["src/outgoing.css"]["column"], 2)
+        self.assertEqual(deleted["why"], "deleted · base.css imported it")
+        self.assertGreater(deleted["impact"]["reach"], 0)
 
     def test_preflight_and_graph_bootstrap_behavior(self):
         self.write("source.py", "x = 1\n")
@@ -170,9 +175,27 @@ class ImpactTest(unittest.TestCase):
         paths = {"first.py": {"second.py"}, "second.py": {"third.py"}}
         self.assertEqual(impact.reach_from("first.py", paths), {"second.py": 1, "third.py": 2})
         file = {"added": 500, "removed": 500}
-        impact.score_file(file, {"second.py": 1, "third.py": 2}, 80, "API change", {"second.py"})
+        impact.score_file(file, {"second.py": 1, "third.py": 2}, 80, "API change", {"second.py"}, 3)
         self.assertEqual((file["score"], file["band"]), (59, "medium"))
         self.assertIn("1 changed file uses it", file["why"])
+
+    def test_widely_imported_file_outranks_leaf_after_calibration(self):
+        paths = {"core.ts", "leaf.ts", *(f"caller{i}.ts" for i in range(20))}
+        reverse = {"core.ts": {f"caller{i}.ts" for i in range(20)}, "leaf.ts": {"caller0.ts"}}
+        reference = impact.reach_reference(paths, reverse)
+        core, leaf = ({"added": 10, "removed": 5} for _ in range(2))
+        for file, path in ((core, "core.ts"), (leaf, "leaf.ts")):
+            impact.score_file(file, impact.reach_from(path, reverse), 55, "new file", paths, reference)
+        self.assertEqual(core["band"], "high")
+        self.assertGreater(core["score"], leaf["score"])
+
+        reverse.update({path: {"caller0.ts", "caller1.ts", "caller2.ts", "caller3.ts"}
+                        for path in paths if path.startswith("caller")})
+        busier_reference = impact.reach_reference(paths, reverse)
+        self.assertGreater(busier_reference, reference)
+        prior = leaf["impact"]["reach"]
+        impact.score_file(leaf, {"caller0.ts": 1}, 55, "new file", paths, busier_reference)
+        self.assertLess(leaf["impact"]["reach"], prior)
 
     def test_layout_transitive_parent_and_cycle(self):
         rows = [("api.ts", 89), ("client.ts", 75), ("cycle.ts", 68), ("page.ts", 55),

@@ -195,10 +195,10 @@ def css_dependencies(root, revision, edges, paths):
                     break
 
 
-def deleted_importers(root, base, path):
+def importers_by_source(root, revision, path):
     stem = PurePosixPath(path).stem
     boundary = re.compile(r"(?<![\w-])" + re.escape(stem) + r"(?![\w-])")
-    for source, line in grep_sources(root, base, stem, fixed=True):
+    for source, line in grep_sources(root, revision, stem, fixed=True):
         if source == path or category(source) != "code":
             continue
         if not re.search(r"^\s*(?:import\b|from\b|export\b|@import\b|@use\b|use\b)|\b(?:import|require)\s*\(", line):
@@ -222,7 +222,7 @@ def reach_from(path, edges):
     queue = deque([(path, 0)])
     while queue:
         current, distance = queue.popleft()
-        for linked in sorted(edges.get(current, ())):
+        for linked in edges.get(current, ()):
             if linked != path and linked not in distances:
                 distances[linked] = distance + 1
                 queue.append((linked, distance + 1))
@@ -313,8 +313,22 @@ def change_type(root, revision, file, distances, packages):
     return 42 if file["status"] == "D" else 23, "file removed" if file["status"] == "D" else "implementation change"
 
 
-def score_file(file, distances, type_score, reason, changed):
-    reach = 100 * (1 - math.exp(-sum(1 / distance for distance in distances.values()) / 3))
+def weighted_reach(distances):
+    return math.fsum(1 / distance for distance in distances.values())
+
+
+def reach_reference(paths, reverse):
+    code = sorted(path for path in paths if category(path) == "code")
+    if not code:
+        return 1
+    if len(code) > 256:
+        code = [code[i * len(code) // 256] for i in range(256)]
+    values = sorted(weighted_reach(reach_from(path, reverse)) for path in code)
+    return max(1, values[math.ceil(0.90 * len(values)) - 1])
+
+
+def score_file(file, distances, type_score, reason, changed, reference):
+    reach = 100 * (1 - math.exp(-weighted_reach(distances) / reference))
     size = min(100, 100 * math.log1p(file["added"] + file["removed"]) / math.log1p(1000))
     score = math.floor(0.60 * reach + 0.25 * type_score + 0.15 * size + 0.5)
     used_by = sorted(distances, key=lambda path: (distances[path], path))
@@ -330,7 +344,8 @@ def score_file(file, distances, type_score, reason, changed):
     )
 
 
-def place_tree(files, edges):
+def place_tree(files, edges, dropped_imports=None):
+    dropped_imports = dropped_imports or {}
     by_path = {file["path"]: file for file in files}
     paths = by_path.keys()
     dependencies = {path: reach_from(path, edges).keys() & paths for path in paths}
@@ -362,7 +377,9 @@ def place_tree(files, edges):
     for path in sorted(paths, key=rank):
         file = by_path[path]
         deps = sorted(dependencies[path], key=rank)
-        parent = next((dep for dep in deps if representatives[dep] != representatives[path]), None)
+        candidates = [dep for dep in deps if representatives[dep] != representatives[path]]
+        dropped = dropped_imports.get(path, set())
+        parent = next((dep for dep in candidates if dep in dropped), candidates[0] if candidates else None)
         linked = bool(deps or any(path in others for others in dependencies.values()))
         is_standalone = category(path) != "code" and not linked and not file["usedBy"]
         file.update(parent=parent, extraDependencies=[dep for dep in deps if dep != parent],
@@ -406,25 +423,39 @@ def analyze(root, comp, graph, files):
         else:
             edges[source].intersection_update(paths)
     css_dependencies(target, revision, edges, paths)
-    former = {}
-    for file in files:
-        path = file["path"]
-        if file["status"] == "D":
-            former[path] = sorted(set(deleted_importers(root, comp["diffBase"], path)))
-            for source in former[path]:
-                edges[source].add(path)
-
     reverse = defaultdict(set)
     for source, dependencies in edges.items():
         for dependency in dependencies:
             reverse[dependency].add(source)
+    reference = reach_reference(paths, reverse)
+
+    dropped_imports = {}
+    for file in files:
+        if file["status"] != "D":
+            continue
+        path = file["path"]
+        prior = set(importers_by_source(root, comp["diffBase"], path))
+        still_imports = set(importers_by_source(target, revision, path))
+        dropped = (prior - still_imports) & by_path.keys() & paths
+        file["previousImporters"] = sorted(prior)
+        reverse[path].update(prior)
+        # The removed path hangs off the changed importer that dropped it.
+        # Only the impact calculation follows the pre-change import direction.
+        dropped_imports[path] = dropped
+        if dropped:
+            edges[path].update(dropped)
+
     for file in files:
         path = file["path"]
         distances = reach_from(path, reverse)
         type_score, reason = change_type(target, revision, file, distances, packages.get(path))
-        score_file(file, distances, type_score, reason, by_path)
-        if path in former:
-            file["previousImporters"] = former[path]
+        score_file(file, distances, type_score, reason, by_path, reference)
+        prior = file.get("previousImporters")
+        if prior:
+            preferred = sorted(dropped_imports[path]) or prior
+            importer = PurePosixPath(preferred[0]).name
+            others = f" and {len(prior) - 1} more" if len(prior) > 1 else ""
+            file["why"] = f"deleted · {importer}{others} imported it"
     # The lockfile follows its manifest for placement. It does not import a package.
     for file in files:
         path = file["path"]
@@ -436,4 +467,4 @@ def analyze(root, comp, graph, files):
 
 
     files.sort(key=lambda file: (-file["score"], file["path"]))
-    return place_tree(files, edges)
+    return place_tree(files, edges, dropped_imports)
