@@ -1,3 +1,4 @@
 /.scratch/
+/internal/docs/
 __pycache__/
 .DS_Store
