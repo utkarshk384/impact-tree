@@ -29,6 +29,8 @@ const SHORTCUTS = [
     [']  /  [', 'Next / previous change block, with its AI summary'],
     ['u  /  s', 'Unified / side by side'],
     ['x', 'Show all unchanged lines'],
+    ['v', 'Mark the file as viewed, or clear the mark'],
+    ['Select text', 'Highlight every match in the file. Esc clears.'],
     ['e', 'Edit the file (working tree only)'],
     ['Ctrl S', 'Save the edit'],
     ['b  or  Esc', 'Back to the tree'],

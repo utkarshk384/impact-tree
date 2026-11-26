@@ -572,9 +572,9 @@ function renderFile(preserveScroll = false) {
           <button type="button" data-action="split" aria-pressed="${!editing && diffView === 'split'}" ${editing ? 'disabled' : ''}>${icon('split')} Side by side</button>
         </div>
         <button type="button" class="pill surface file-nav" data-action="previous" ${previousFile === file || editing ? 'disabled' : ''}
-          title="${esc(previousFile.path)}"><span class="ellipsis">Previous file · ${esc(previousFile.cardName)}</span></button>
+          title="Previous file: ${esc(previousFile.path)} (p)" aria-label="Previous file: ${esc(previousFile.cardName)}">Previous file</button>
         <button type="button" class="pill surface file-nav" data-action="next" ${nextFile === file || editing ? 'disabled' : ''}
-          title="${esc(nextFile.path)}"><span class="ellipsis">Next file · ${esc(nextFile.cardName)}</span></button>
+          title="Next file: ${esc(nextFile.path)} (n)" aria-label="Next file: ${esc(nextFile.cardName)}">Next file</button>
         <span id="save-feedback" class="diff-feedback ${saveFailed ? 'error' : ''}" role="status" ${saveMessage ? '' : 'hidden'}>${esc(saveMessage)}</span>
       </div>
       <div class="diff-scroll" tabindex="0" aria-label="Git diff">

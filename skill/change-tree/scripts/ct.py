@@ -38,6 +38,8 @@ def main(argv=None):
     serve_parser = subs.add_parser("serve")
     serve_parser.add_argument("--repo", default=".")
     serve_parser.add_argument("--port", type=int, default=0)
+    serve_parser.add_argument("--agent", choices=("claude", "codex"), default="claude",
+                              help="the agent that runs the skill; it sets the model list")
     serve_parser.add_argument("--model", help="summary sub-agent model for this run, or 'default'")
     serve_parser.add_argument("--effort", help="summary sub-agent effort for this run, or 'default'")
     compare_options(serve_parser)
@@ -52,6 +54,7 @@ def main(argv=None):
     for job_parser in (done_parser, wait_parser):
         job_parser.add_argument("--repo", dest="job_repo", default=None)
     config_parser = subs.add_parser("config", help="show or save the summary sub-agent's model and effort")
+    config_parser.add_argument("--agent", choices=("claude", "codex"), default="claude")
     config_parser.add_argument("--model")
     config_parser.add_argument("--effort")
     for name in ("url", "stop"):
@@ -73,17 +76,19 @@ def main(argv=None):
             return 0
         if args.command == "config":
             from edits import EditError
-            from server import clean_settings, load_settings, settings_path, write_json
-            settings = load_settings()
+            from server import catalog, clean_settings, load_settings, save_settings, settings_path
+            settings = load_settings(args.agent)
             changes = {key: value for key, value in (("model", args.model), ("effort", args.effort)) if value}
             if changes:
                 try:
-                    settings = clean_settings(changes, settings)
+                    settings = clean_settings(changes, settings, args.agent)
                 except EditError as error:
                     print(error, file=sys.stderr)
                     return 2
-                write_json(settings_path(), settings)
-            print(f"model={settings['model']} effort={settings['effort']} ({settings_path()})")
+                save_settings(args.agent, settings)
+            options = catalog(args.agent)
+            print(f"{options['label']}: model={settings['model']} effort={settings['effort']} ({settings_path()})")
+            print("Models: default, " + ", ".join(item["value"] for item in options["models"]))
             return 0
         if args.command in ("url", "stop"):
             import time

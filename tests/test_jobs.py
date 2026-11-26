@@ -200,13 +200,40 @@ class JobsFixture(GitRepoMixin, unittest.TestCase):
         with patch.dict("os.environ", {"XDG_CONFIG_HOME": str(config)}):
             self.assertEqual(self.state.update_settings({"model": "sonnet", "effort": "high"}),
                              {"settings": {"model": "sonnet", "effort": "high"}})
-            self.assertEqual(read_json(config / "change-tree" / "config.json", {}), {"model": "sonnet", "effort": "high"})
-            with self.assertRaisesRegex(Exception, "Effort must be"):
+            self.assertEqual(read_json(config / "change-tree" / "config.json", {}), {"claude": {"model": "sonnet", "effort": "high"}})
+            with self.assertRaisesRegex(Exception, "Effort for sonnet must be"):
                 self.state.update_settings({"effort": "extreme"})
-            with self.assertRaisesRegex(Exception, "Model must be"):
+            with self.assertRaisesRegex(Exception, "Choose a Claude Code model"):
                 self.state.update_settings({"model": "bad model; rm"})
         code, line = wait(self.root, 4)
         self.assertEqual(line.split(" ")[3:5], ["sonnet", "high"])
+
+    def test_codex_models_come_from_the_codex_model_cache(self):
+        from server import catalog, clean_settings, load_settings, save_settings
+        self.start_jobs(files=1)
+        codex_home = self.cache / "codex-home"
+        config = self.cache / "config-home"
+        write_json(codex_home / "models_cache.json", {"models": [
+            {"slug": "gpt-a", "display_name": "GPT A", "visibility": "list", "priority": 2,
+             "supported_reasoning_levels": [{"effort": "low"}, {"effort": "ultra"}]},
+            {"slug": "gpt-hidden", "visibility": "hide", "supported_reasoning_levels": [{"effort": "low"}]},
+            {"slug": "gpt-b", "display_name": "GPT B", "visibility": "list", "priority": 1,
+             "supported_reasoning_levels": [{"effort": "medium"}]},
+        ]})
+        with patch.dict("os.environ", {"CODEX_HOME": str(codex_home), "XDG_CONFIG_HOME": str(config)}):
+            options = catalog("codex")
+            self.assertEqual([item["value"] for item in options["models"]], ["gpt-b", "gpt-a"])
+            self.assertEqual(clean_settings({"model": "gpt-a", "effort": "ultra"}, agent="codex"),
+                             {"model": "gpt-a", "effort": "ultra"})
+            with self.assertRaisesRegex(Exception, "Effort for gpt-b"):
+                clean_settings({"model": "gpt-b", "effort": "ultra"}, agent="codex")
+            with self.assertRaisesRegex(Exception, "Choose a Codex model"):
+                clean_settings({"model": "sonnet"}, agent="codex")
+            self.assertEqual([item["value"] for item in catalog("claude")["models"]], ["haiku", "sonnet", "opus", "fable"])
+            save_settings("codex", {"model": "gpt-a", "effort": "low"})
+            save_settings("claude", {"model": "opus", "effort": "max"})
+            self.assertEqual(load_settings("codex"), {"model": "gpt-a", "effort": "low"})
+            self.assertEqual(load_settings("claude"), {"model": "opus", "effort": "max"})
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@
   <script src="/app.js" defer></script>
   <script src="/keys.js" defer></script>
   <script src="/settings.js" defer></script>
+  <script src="/review.js" defer></script>
 </head>
 <body>
   <header class="header">
@@ -41,21 +42,13 @@
   </header>
 
   <section class="agent-settings" id="agent-settings" role="dialog" aria-labelledby="agent-settings-title" hidden>
-    <h2 id="agent-settings-title">Summary agent</h2>
+    <h2 id="agent-settings-title">Summary agent <span class="muted" id="agent-host"></span></h2>
     <p class="muted">The agent that runs the skill starts one sub-agent for each summary job. New jobs use these settings. They are saved in <code>~/.config/change-tree/config.json</code>.</p>
     <label for="agent-model">Model</label>
-    <input id="agent-model" list="agent-models" autocomplete="off" spellcheck="false" placeholder="default">
-    <datalist id="agent-models">
-      <option value="default">Same as the session</option>
-      <option value="haiku"></option><option value="sonnet"></option><option value="opus"></option><option value="fable"></option>
-      <option value="gpt-6.2-sol"></option><option value="gpt-6.2-astra"></option><option value="gpt-6.1-terra"></option>
-    </datalist>
-    <span class="hint">Claude Code: haiku, sonnet, opus or fable. Codex: a model name such as gpt-6.2-sol. "default" uses the session's model.</span>
+    <select id="agent-model"></select>
+    <span class="hint" id="agent-hint"></span>
     <label for="agent-effort">Effort</label>
-    <select id="agent-effort">
-      <option value="default">Default</option><option value="low">Low</option><option value="medium">Medium</option>
-      <option value="high">High</option><option value="xhigh">Extra high</option><option value="max">Max</option>
-    </select>
+    <select id="agent-effort"></select>
     <div class="agent-footer"><span id="agent-status" role="status"></span>
       <button type="button" class="pill surface" id="agent-cancel">Cancel</button>
       <button type="button" class="pill primary" id="agent-save">Save</button></div>

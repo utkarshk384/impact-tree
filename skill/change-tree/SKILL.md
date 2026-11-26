@@ -15,7 +15,7 @@ In Claude Code, parse `$ARGUMENTS` from `/change-tree`. In Codex, parse the argu
 - `base` alone: compare `base` with the working tree (`--head WORKTREE`).
 - Nothing: compare `HEAD` with the working tree.
 - `--task "…"`: an optional task summary. Pass it as one argument.
-- `--model <name>` and `--effort <level>`: the model and effort of the summary sub-agents for this run. Effort is one of `low`, `medium`, `high`, `xhigh`, `max`, or `default`. Without these options, the saved settings apply. The user saves settings in the page (the "AI" button in the header) or with `python3 "$ct" config --model <name> --effort <level>`.
+- `--model <name>` and `--effort <level>`: the model and effort of the summary sub-agents for this run. Without these options, the saved settings apply. The choices depend on the agent: Claude Code offers `haiku`, `sonnet`, `opus` and `fable`, and Codex offers the models in `~/.codex/models_cache.json`. The user saves settings in the page (the "AI" button in the header) or with `python3 "$ct" config --agent <claude|codex> --model <name> --effort <level>`, which also lists the choices.
 
 Keep the quoting of ref names, paths and task text. Use the checkout where the user started the skill.
 
@@ -26,8 +26,10 @@ Keep the quoting of ref names, paths and task text. Use the checkout where the u
 3. Start the server as a background command. In Claude Code, use the Bash tool with `run_in_background: true`. In Codex, use a background terminal.
 
    ```sh
-   python3 "$ct" serve --repo "$repo" --base "$base" --head "$head" --task="$task"
+   python3 "$ct" serve --repo "$repo" --agent "$agent" --base "$base" --head "$head" --task="$task"
    ```
+
+   Set `agent` to `claude` in Claude Code and to `codex` in Codex. The page then lists the models of that agent.
 
    Leave out `--task` when there is no task. Add `--model "$model"` and `--effort "$effort"` only when the user gave them.
 4. Run `python3 "$ct" url --repo "$repo" --wait 30` in the foreground. It prints `CHANGE_TREE_URL <url>`.

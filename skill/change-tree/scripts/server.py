@@ -21,7 +21,8 @@ WEB = Path(__file__).resolve().parents[1] / "web"
 ASSETS = {"/": ("index.html", "text/html"), "/styles.css": ("styles.css", "text/css"),
           "/app.js": ("app.js", "text/javascript"), "/tree.js": ("tree.js", "text/javascript"),
           "/keys.js": ("keys.js", "text/javascript"),
-          "/settings.js": ("settings.js", "text/javascript")}
+          "/settings.js": ("settings.js", "text/javascript"),
+          "/review.js": ("review.js", "text/javascript")}
 MAX_REQUEST = 6_000_000
 MAX_EXPAND_LINES = 20_000
 
@@ -62,8 +63,9 @@ def repo_cache(root):
     return Path.home() / ".cache" / "change-tree" / key
 
 
-EFFORTS = ("default", "low", "medium", "high", "xhigh", "max")
-MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}")
+AGENTS = ("claude", "codex")
+CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"]
+CLAUDE_MODELS = [("haiku", "Haiku"), ("sonnet", "Sonnet"), ("opus", "Opus"), ("fable", "Fable")]
 DEFAULT_SETTINGS = {"model": "default", "effort": "default"}
 
 
@@ -72,23 +74,70 @@ def settings_path():
     return Path(base) / "change-tree" / "config.json"
 
 
-def clean_settings(values, current=None):
-    """Validate the summary agent's model and effort. Unknown keys are ignored."""
+def codex_models():
+    """Models that Codex lists for this account, from its local model cache."""
+    home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+    cache = read_json(home / "models_cache.json", {})
+    models = []
+    for model in cache.get("models", []) if isinstance(cache, dict) else []:
+        if not isinstance(model, dict) or model.get("visibility") != "list" or not isinstance(model.get("slug"), str):
+            continue
+        levels = [level.get("effort") if isinstance(level, dict) else level
+                  for level in model.get("supported_reasoning_levels") or []]
+        models.append({"value": model["slug"], "label": model.get("display_name") or model["slug"],
+                       "efforts": [level for level in levels if isinstance(level, str)] or CLAUDE_EFFORTS})
+    models.sort(key=lambda item: next((m.get("priority", 99) for m in cache.get("models", [])
+                                       if m.get("slug") == item["value"]), 99))
+    return models
+
+
+def catalog(agent):
+    """The model and effort choices of the agent that runs the skill."""
+    if agent == "codex":
+        models = codex_models()
+        label = "Codex"
+    else:
+        models = [{"value": value, "label": name, "efforts": CLAUDE_EFFORTS} for value, name in CLAUDE_MODELS]
+        label = "Claude Code"
+    efforts = sorted({effort for model in models for effort in model["efforts"]},
+                     key=lambda effort: (CLAUDE_EFFORTS + ["ultra"]).index(effort)
+                     if effort in CLAUDE_EFFORTS + ["ultra"] else 99)
+    return {"agent": agent, "label": label, "models": models, "efforts": efforts}
+
+
+def clean_settings(values, current=None, agent="claude"):
+    """Validate the summary agent's model and effort against the agent's catalog."""
     settings = dict(current or DEFAULT_SETTINGS)
     model = values.get("model", settings["model"])
     effort = values.get("effort", settings["effort"])
-    if not isinstance(model, str) or not (model == "default" or MODEL_NAME.fullmatch(model.strip())):
-        raise EditError("Model must be 'default' or a model name such as sonnet, opus or gpt-6.2-sol.")
-    if effort not in EFFORTS:
-        raise EditError("Effort must be one of: " + ", ".join(EFFORTS) + ".")
-    return {"model": model.strip() or "default", "effort": effort}
+    options = catalog(agent)
+    names = {item["value"]: item for item in options["models"]}
+    if not isinstance(model, str) or (model != "default" and names and model not in names):
+        raise EditError(f"Choose a {options['label']} model: default, " + ", ".join(names) + ".")
+    if model != "default" and not names and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}", model):
+        raise EditError("Model must be 'default' or a model name.")
+    allowed = names[model]["efforts"] if model in names else options["efforts"] or CLAUDE_EFFORTS
+    if effort != "default" and effort not in allowed:
+        raise EditError(f"Effort for {model} must be default or one of: " + ", ".join(allowed) + ".")
+    return {"model": model, "effort": effort}
 
 
-def load_settings():
+def load_settings(agent="claude"):
+    saved = read_json(settings_path(), {})
+    saved = saved if isinstance(saved, dict) else {}
+    # Version 1 kept one flat setting. It belongs to Claude Code.
+    values = saved.get(agent) if isinstance(saved.get(agent), dict) else (saved if agent == "claude" and "model" in saved else {})
     try:
-        return clean_settings(read_json(settings_path(), {}))
+        return clean_settings(values, agent=agent)
     except EditError:
         return dict(DEFAULT_SETTINGS)
+
+
+def save_settings(agent, settings):
+    saved = read_json(settings_path(), {})
+    saved = {key: value for key, value in (saved if isinstance(saved, dict) else {}).items() if key in AGENTS}
+    saved[agent] = settings
+    write_json(settings_path(), saved)
 
 
 def server_info_path(root):
@@ -121,9 +170,10 @@ def public_error(error):
 
 
 class State:
-    def __init__(self, root, analyze, job_factory=None, cache=None, settings=None):
+    def __init__(self, root, analyze, job_factory=None, cache=None, settings=None, agent="claude"):
         self.root = root
         self.analyze = analyze
+        self.agent = agent if agent in AGENTS else "claude"
         self.settings = dict(settings or DEFAULT_SETTINGS)
         self.cache = cache or repo_cache(root)
         self.changed = Condition()
@@ -150,11 +200,14 @@ class State:
 
     def get(self):
         with self.changed:
-            return {**self.result, "settings": self.settings}
+            return {**self.result, "settings": self.settings, "agentCatalog": catalog(self.agent)}
 
     def update_settings(self, body):
-        settings = clean_settings(body, self.settings)
-        cache_json(settings_path(), settings)
+        settings = clean_settings(body, self.settings, self.agent)
+        try:
+            save_settings(self.agent, settings)
+        except OSError as error:
+            print(f"Change Tree settings: {public_error(error)}", file=sys.stderr)
         with self.changed:
             self.settings = settings
             self.notify()
@@ -437,11 +490,14 @@ def serve(root, analyze, args, job_factory=None):
         print(f"CHANGE_TREE_RUNNING {running['url']}", flush=True)
         raise ChangeTreeError(f"Change Tree is already running for this repository at {running['url']}. "
                               "Use that page, or stop it with `ct.py stop`.", 5)
-    settings = load_settings()
+    settings = load_settings(args.agent)
     overrides = {key: value for key, value in (("model", args.model), ("effort", args.effort)) if value}
     if overrides:
-        settings = clean_settings(overrides, settings)
-    state = State(root, analyze, job_factory=job_factory, settings=settings)
+        try:
+            settings = clean_settings(overrides, settings, args.agent)
+        except EditError as error:
+            raise ChangeTreeError(str(error), 2) from error
+    state = State(root, analyze, job_factory=job_factory, settings=settings, agent=args.agent)
     with Server(state, args.port) as server:
         info_path = server_info_path(root)
         write_json(info_path, {"url": server.url, "token": server.token, "pid": os.getpid()})
