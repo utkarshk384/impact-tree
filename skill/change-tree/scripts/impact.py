@@ -371,7 +371,7 @@ def place_tree(files, edges, dropped_imports=None):
     def rank(path):
         return (-by_path[path]["score"], path)
 
-    rows = defaultdict(int)
+    columns_to_paths = defaultdict(list)
     standalone = []
     positions = {}
     for path in sorted(paths, key=rank):
@@ -387,17 +387,22 @@ def place_tree(files, edges, dropped_imports=None):
         if is_standalone:
             standalone.append(path)
         else:
-            col = columns[representatives[path]]
-            positions[path] = {"column": col, "x": 196 + col * 256, "y": 150 + rows[col] * 112}
-            rows[col] += 1
+            columns_to_paths[columns[representatives[path]]].append(path)
 
-    tallest = max(rows.values(), default=0)
+    row_of = {}
+    for col, ordered in sorted(columns_to_paths.items()):
+        ordered.sort(key=lambda path: (row_of.get(by_path[path]["parent"], 0), *rank(path)))
+        for row, path in enumerate(ordered):
+            row_of[path] = row
+            positions[path] = {"column": col, "x": 196 + col * 256, "y": 150 + row * 112}
+
+    tallest = max(map(len, columns_to_paths.values()), default=0)
     standalone_top = 150 + tallest * 112 + (74 if tallest else 0)
     for row, path in enumerate(standalone):
         positions[path] = {"column": None, "x": 196, "y": standalone_top + row * 112}
     bottom = max((position["y"] + 96 for position in positions.values()), default=150)
     return {
-        "positions": positions, "columns": max(rows, default=-1) + 1,
+        "positions": positions, "columns": max(columns_to_paths, default=-1) + 1,
         "root": {"x": 24, "y": min(408, max(156, round((bottom + 150) / 2) - 42))},
         "standaloneTop": standalone_top - 24 if standalone else None,
         "width": max((position["x"] + 224 for position in positions.values()), default=420) + 20,

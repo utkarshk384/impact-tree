@@ -8,7 +8,6 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "skill/change-tree/scripts"))
-import ct
 import impact
 import repo
 
@@ -21,6 +20,7 @@ class GitRepoMixin:
         self.run_git("init", "-b", "main")
         self.run_git("config", "user.name", "Fixture")
         self.run_git("config", "user.email", "fixture@example.test")
+        self.run_git("config", "commit.gpgsign", "false")
 
     def run_git(self, *args):
         return repo.git(self.root, *args)
@@ -198,6 +198,17 @@ class ImpactTest(unittest.TestCase):
         prior = leaf["impact"]["reach"]
         impact.score_file(leaf, {"caller0.ts": 1}, 55, "new file", paths, busier_reference)
         self.assertLess(leaf["impact"]["reach"], prior)
+
+    def test_children_follow_their_parent_rows_before_score(self):
+        paths = [("api.ts", 96), ("config.ts", 93), ("helper.ts", 89), ("viewer.ts", 60),
+                 ("removed.ts", 87), ("page.ts", 30)]
+        files = [{"path": path, "score": score, "usedBy": []} for path, score in paths]
+        edges = {"helper.ts": {"api.ts"}, "viewer.ts": {"config.ts"},
+                 "removed.ts": {"viewer.ts"}, "page.ts": {"helper.ts"}}
+        dropped = {"removed.ts": {"viewer.ts"}}
+        result = impact.place_tree(files, edges, dropped)["positions"]
+        self.assertLess(result["helper.ts"]["y"], result["viewer.ts"]["y"])
+        self.assertLess(result["page.ts"]["y"], result["removed.ts"]["y"])
 
     def test_layout_transitive_parent_and_cycle(self):
         rows = [("api.ts", 89), ("client.ts", 75), ("cycle.ts", 68), ("page.ts", 55),

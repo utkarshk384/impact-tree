@@ -92,6 +92,24 @@ class ServerFixture(GitRepoMixin, unittest.TestCase):
         finally:
             connection.close()
 
+    def test_fork_pull_head_remains_available_after_unlinking(self):
+        base = self.run_git("rev-parse", "HEAD").decode().strip()
+        head = self.commit("Topic head")
+        self.run_git("remote", "add", "fixture", str(self.root))
+        self.run_git("update-ref", "refs/pull/11/head", head)
+        state = State(self.root, analyze, "fixture", cache=self.cache)
+        synthetic = "refs/change-tree/pr/11"
+        pull = {"base": base, "head": synthetic, "headLabel": "topic", "value": 11,
+                "remote": "fixture", "fetchHead": True}
+        state.result["refs"] = {"prs": [pull]}
+        linked = state.compare({"base": base, "head": synthetic, "pr": 11})
+        self.assertEqual(linked["comparison"]["pr"], 11)
+        self.assertEqual(linked["comparison"]["headCommit"], head)
+        self.assertEqual(linked["comparison"]["headLabel"], "topic")
+        unlinked = state.compare({"base": base, "head": synthetic})
+        self.assertIsNone(unlinked["comparison"]["pr"])
+        self.assertEqual(unlinked["comparison"]["headCommit"], head)
+
     def test_http_token_origin_and_worktree_only_save(self):
         with self.server() as server:
             same_origin = {"Origin": server.url, "X-Change-Tree-Token": server.token}

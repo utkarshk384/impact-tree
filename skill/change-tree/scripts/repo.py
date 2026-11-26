@@ -137,7 +137,7 @@ def read_diff(comp):
         actual_index = git(root, "rev-parse", "--path-format=absolute", "--git-path", "index")
         index = Path(os.fsdecode(actual_index.rstrip(b"\n")))
         if index.is_file():
-            shutil.copyfile(index, temporary / "index")
+            shutil.copy2(index, temporary / "index")
         env = {
             **os.environ,
             "GIT_INDEX_FILE": str(temporary / "index"),
@@ -318,7 +318,7 @@ def refs(root):
     if shutil.which("gh"):
         try:
             result = command(["gh", "pr", "list", "--json",
-                              "number,title,baseRefName,headRefName,headRepositoryOwner,isCrossRepository"], root,
+                              "number,title,baseRefName,headRefName,isCrossRepository"], root,
                              env={**os.environ, "GH_PROMPT_DISABLED": "1"}, timeout=8)
             if result.returncode == 0:
                 pr_note = "No open pull requests"
@@ -334,9 +334,13 @@ def refs(root):
 
                 for pr in json.loads(result.stdout):
                     number, base, head = pr["number"], pr["baseRefName"], pr["headRefName"]
-                    pulls.append({"value": number, "label": f"PR #{number} · {head} → {base}",
-                                  "note": pr["title"], "base": best_ref(base), "head": best_ref(head),
-                                  "remote": remote, "fetchHead": best_ref(head) not in known or pr.get("isCrossRepository", False)})
+                    head_ref = best_ref(head)
+                    needs_fetch = head_ref not in known or pr.get("isCrossRepository", False)
+                    pulls.append({
+                        "value": number, "label": f"PR #{number} · {head} → {base}", "note": pr["title"],
+                        "base": best_ref(base), "head": f"refs/change-tree/pr/{number}" if needs_fetch else head_ref,
+                        "headLabel": head if needs_fetch else head_ref, "remote": remote, "fetchHead": needs_fetch,
+                    })
         except (OSError, ValueError, KeyError, subprocess.TimeoutExpired):
             pass
     return {"commits": commits, "branches": branches, "origins": origins,

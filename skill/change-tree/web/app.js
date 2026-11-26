@@ -32,6 +32,7 @@ let collapsed = new Set();
 let editing = false;
 let draft = null;
 let busy = false;
+let queuedUpdate = null;
 let saveMessage = '';
 let saveFailed = false;
 let lastFileButton = null;
@@ -66,6 +67,10 @@ function refLabel(value, side) {
   const comparison = state.comparison;
   if (value === comparison[side]) return comparison[side + 'Label'];
   if (value === 'WORKTREE') return 'Working tree';
+  if (side === 'head') {
+    const pull = (state.refs.prs || []).find((item) => item.fetchHead && item.head === value);
+    if (pull) return pull.headLabel;
+  }
   for (const key of ['commits', 'worktrees', 'branches', 'origins']) {
     const match = (state.refs[key] || []).find((item) => item.value === value);
     if (match) return match.label;
@@ -114,10 +119,6 @@ const roots = [
   'M30 492 C20 504 10 508 0 512', 'M58 492 C54 540 46 580 50 640', 'M86 560 C96 572 110 576 124 576',
   'M24 540 C14 552 8 566 6 590',
 ];
-const twigs = [
-  ['M600 358 C606 372 618 378 632 380', 637, 381], ['M600 628 C606 642 618 648 632 650', 637, 651],
-  ['M800 516 C806 530 818 536 832 538', 837, 539], ['M860 246 C866 260 878 266 892 268', 897, 269],
-];
 const pathElement = (line) => `<path d="${line}"></path>`;
 
 function branch(parent, child, offset = 0) {
@@ -130,10 +131,14 @@ function branch(parent, child, offset = 0) {
     return `M${parent.x} ${y} C${gutter} ${y} ${gutter} ${toY} ${toX} ${toY}`;
   }
   if (child.column - parent.column > 1) {
-    const high = Math.max(110, Math.min(parent.y, child.y) - 50 - Math.abs(offset));
-    const start = parent.x + 134;
-    const end = child.x + 52 + offset;
-    return `M${start} ${parent.y} C${start + 90} ${high} ${end - 90} ${high} ${end} ${child.y}`;
+    // The gap below the labels and above the top row keeps long links visible.
+    const routeY = 146;
+    const firstGap = x + 15 + offset / 2;
+    const lastGap = toX - 15 + offset / 2;
+    return `M${x} ${y} C${firstGap} ${y} ${firstGap} ${y - 16} ${firstGap} ${routeY + 8}
+      Q${firstGap} ${routeY} ${firstGap + 8} ${routeY} H${lastGap - 8}
+      Q${lastGap} ${routeY} ${lastGap} ${routeY + 8}
+      C${lastGap} ${toY - 16} ${lastGap} ${toY} ${toX} ${toY}`;
   }
   const middle = (x + toX) / 2;
   return `M${x} ${y} C${middle} ${y} ${middle} ${toY} ${toX} ${toY}`;
@@ -155,7 +160,7 @@ function drawTree() {
   if (map.standaloneTop !== null) {
     labels += `<div class="tree-label standalone" style="left:196px;top:${map.standaloneTop - 64}px">Standalone · nothing imports these</div>`;
   }
-  const primary = [], secondary = [];
+  const primary = [], secondary = [], twigs = [], leaves = [];
   let rootCount = 0;
   for (const file of state.files) {
     const pos = map.positions[file.path];
@@ -166,6 +171,12 @@ function drawTree() {
       const startY = map.root.y + 42 + Math.min(16, (rootCount++ % 9 - 4) * 4);
       primary.push(`M122 ${startY} C162 ${startY} 156 ${y} ${pos.x} ${y}`);
     }
+    if (pos.column >= 1 && pos.column === map.columns - 1) {
+      const tipX = pos.x + 217;
+      const tipY = pos.y + 109;
+      twigs.push(`M${tipX - 25} ${tipY - 13} C${tipX - 22} ${tipY - 5} ${tipX - 12} ${tipY - 3} ${tipX - 4} ${tipY}`);
+      leaves.push(`<ellipse cx="${tipX}" cy="${tipY}" rx="5" ry="2.6" transform="rotate(10 ${tipX} ${tipY})"></ellipse>`);
+    }
     for (const [index, dependency] of file.extraDependencies.entries()) {
       secondary.push(branch(map.positions[dependency], pos, index % 3 * 7 - 7));
     }
@@ -175,9 +186,9 @@ function drawTree() {
     <g fill="none" stroke="#6e6e6e" stroke-width="2" stroke-linecap="round">
       <g transform="translate(0 ${map.root.y - 408})">${roots.map(pathElement).join('')}</g>
       ${primary.map(pathElement).join('')}
-      ${map.columns >= 3 ? twigs.map(([shape]) => pathElement(shape)).join('') : ''}
+      ${twigs.map(pathElement).join('')}
     </g>
-    ${map.columns >= 3 ? `<g fill="#6e6e6e">${twigs.map(([, x, y]) => `<ellipse cx="${x}" cy="${y}" rx="6" ry="3" transform="rotate(10 ${x} ${y})"></ellipse>`).join('')}</g>` : ''}
+    <g fill="#6e6e6e">${leaves.join('')}</g>
     <g class="extra-edges" fill="none" stroke="#6e6e6e" stroke-width="2" stroke-dasharray="4 6" ${links ? '' : 'hidden'}>${secondary.map(pathElement).join('')}</g>
   </svg>`;
   const cards = state.files.map((file) => {
@@ -639,7 +650,7 @@ async function submitComparison() {
     status.classList.add('error');
   } finally {
     button.disabled = false;
-    busy = false;
+    finishRequest();
   }
 }
 
@@ -678,7 +689,16 @@ async function saveEdits() {
   } finally {
     button.disabled = false;
     for (const field of fields) field.readOnly = false;
-    busy = false;
+    finishRequest();
+  }
+}
+
+function finishRequest() {
+  busy = false;
+  if (queuedUpdate) {
+    const update = queuedUpdate;
+    queuedUpdate = null;
+    receiveUpdate(update);
   }
 }
 
@@ -805,29 +825,31 @@ async function loadState() {
   }
 }
 
+function receiveUpdate(update) {
+  if (busy) {
+    queuedUpdate = update;
+    return;
+  }
+  if (state.snapshot !== update.snapshot) {
+    loadState();
+    return;
+  }
+  if (state.refsReady !== update.refsReady) {
+    fetch('/api/state').then((response) => response.json()).then((next) => {
+      if (next.snapshot === state.snapshot) {
+        state = {...state, refs: next.refs, refsReady: next.refsReady};
+        renderPicker();
+      }
+    }).catch(() => {});
+  }
+  state = {...state, ...update, refsReady: state.refsReady};
+  renderOverview();
+  refreshFileSummaries();
+}
+
 renderWorkspace();
 renderOverview();
 loadState().then(() => {
   const stream = new EventSource('/api/events');
-  stream.addEventListener('message', (event) => {
-    const update = JSON.parse(event.data);
-    if (busy) return;
-    if (state.snapshot !== update.snapshot || state.refsReady !== update.refsReady) {
-      if (editing && state.snapshot === update.snapshot) {
-        fetch('/api/state').then((response) => response.json()).then((next) => {
-          if (next.snapshot === state.snapshot) {
-            state = {...state, refs: next.refs, refsReady: next.refsReady};
-            renderPicker();
-            refreshFileSummaries();
-          }
-        }).catch(() => {});
-      } else {
-        loadState();
-      }
-      return;
-    }
-    state = {...state, ...update};
-    renderOverview();
-    refreshFileSummaries();
-  });
+  stream.addEventListener('message', (event) => receiveUpdate(JSON.parse(event.data)));
 });

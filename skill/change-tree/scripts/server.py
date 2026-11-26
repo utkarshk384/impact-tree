@@ -103,7 +103,7 @@ class State:
     def comparison_path(self, snapshot):
         return self.cache / "comparisons" / (snapshot + ".json")
 
-    def publish(self, result, previous=None, edited_path=None, *, choice=None):
+    def publish(self, result, previous=None, edited_path=None):
         snapshot = hashlib.sha256(json_bytes(result)).hexdigest()
         path = self.comparison_path(snapshot)
         cached = read_json(path, {}) if not result["error"] else {}
@@ -121,20 +121,18 @@ class State:
                            "summaryStatus": "pending" if result["files"] else "idle"}
             self.notify()
         if self.jobs:
-            self.jobs.enqueue(snapshot, result, summaries, choice=choice)
+            self.jobs.enqueue(snapshot, result, summaries)
         return self.get()
 
     def summarize(self, snapshot, result, status, error=None):
         path = self.comparison_path(snapshot)
         with self.changed:
-            if self.result["snapshot"] != snapshot:
-                return
-            updated = {**self.result, "summaries": result, "summaryStatus": status, "summaryError": error}
             if result:
                 cached = read_json(path, {})
                 cache_json(path, {**cached, "summaries": result})
-            self.result = updated
-            self.notify()
+            if self.result["snapshot"] == snapshot:
+                self.result = {**self.result, "summaries": result, "summaryStatus": status, "summaryError": error}
+                self.notify()
 
     def analyze_choice(self, base, head, task, pr=None):
         try:
@@ -153,24 +151,29 @@ class State:
                     for value in (base, head)) or not isinstance(task, str) or len(task) > 10000):
             raise EditError("Choose valid Base and Compare references and a short task summary.")
         with self.operations:
-            actual_head = head
+            pulls = self.get()["refs"].get("prs", [])
             if pr is not None:
-                pull = next((item for item in self.get()["refs"].get("prs", [])
-                             if item["value"] == pr and type(pr) is int), None)
+                pull = next((item for item in pulls if item["value"] == pr and type(pr) is int), None)
                 if not pull or (base, head) != (pull["base"], pull["head"]):
                     raise EditError("Choose an open pull request or unlink it.")
-                if pull["fetchHead"]:
-                    remote = pull["remote"]
-                    actual_head = f"refs/change-tree/pr/{pr}"
-                    try:
-                        git(self.root, "fetch", "--no-tags", "--no-write-fetch-head", "--", remote,
-                            f"+refs/pull/{pr}/head:{actual_head}", timeout=30,
-                            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
-                    except (ChangeTreeError, subprocess.TimeoutExpired) as error:
-                        raise EditError(f"Could not fetch pull request #{pr}. {public_error(error)}") from error
-            result = self.analyze_choice(base, actual_head, task.strip(), pr)
-            if actual_head != head:
-                result["comparison"].update(head=head, headLabel=head, resolvedHead=actual_head)
+            # A fork's head remains a valid choice when the user unlinks the
+            # PR or changes its base while keeping that head.
+            fetched = next((item for item in pulls if item["head"] == head and item["fetchHead"]), None)
+            if fetched:
+                number, remote = fetched["value"], fetched["remote"]
+                try:
+                    git(self.root, "fetch", "--no-tags", "--no-write-fetch-head", "--", remote,
+                        f"+refs/pull/{number}/head:{head}", timeout=30,
+                        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+                except (ChangeTreeError, subprocess.TimeoutExpired) as error:
+                    raise EditError(f"Could not fetch pull request #{number}. {public_error(error)}") from error
+            result = self.analyze_choice(base, head, task.strip(), pr)
+            if fetched:
+                comparison = result["comparison"]
+                label = fetched["headLabel"]
+                comparison["headLabel"] = label
+                if comparison.get("diffBase"):
+                    comparison["description"] = f"Three-dot diff · merge base {comparison['diffBase'][:7]} → {label}"
             return self.publish(result)
 
     def save(self, body):

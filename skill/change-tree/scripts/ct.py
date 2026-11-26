@@ -40,8 +40,19 @@ def main(argv=None):
     serve_parser.add_argument("--port", type=int, default=0)
     serve_parser.add_argument("--worker", required=True)
     compare_options(serve_parser)
+    jobs_parser = subs.add_parser("jobs")
+    jobs_parser.add_argument("--repo", default=".")
+    job_subs = jobs_parser.add_subparsers(dest="job_command", required=True)
+    done_parser = job_subs.add_parser("done")
+    done_parser.add_argument("job_id")
+    done_parser.add_argument("result_file")
     args = parser.parse_args(argv)
     try:
+        if args.command == "jobs":
+            from jobs import submit
+            submit(repo.repo_root(args.repo), args.job_id, args.result_file)
+            print(f"Accepted Change Tree job {args.job_id}")
+            return 0
         root = repo.preflight(args.repo)
         if args.command == "preflight":
             print(root)
@@ -49,8 +60,9 @@ def main(argv=None):
             impact.refresh_graph(root)
             print(root / "graphify-out" / "graph.json")
         elif args.command == "serve":
+            from jobs import Jobs
             from server import serve
-            serve(root, analyze, args)
+            serve(root, analyze, args, job_factory=Jobs)
         elif args.command == "refs":
             print(json.dumps(repo.refs(root), indent=None if args.json else 2))
         else:
