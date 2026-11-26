@@ -25,8 +25,8 @@ In Claude Code, parse `$ARGUMENTS` from `/change-tree`. In Codex, parse the argu
      --base "$base" --head "$head" --worker "$worker"
    ```
 
-   Verify the two parent links with `hc get` and both panes in `herdr-app ls`. Read the server output with `hc read <server>`. If needed, use `hc wait <server> --output CHANGE_TREE_URL --timeout 15` and read again. Use the URL from the `CHANGE_TREE_URL` line. If the server exits, report the error and close the unused worker.
-5. Open that URL with `open "$url"` on macOS and tell the user the URL. Keep the server and worker available while the page is in use.
+   Verify the two parent links with `hc get` and both panes in `herdr-app ls`. Find the tab that holds each terminal in `herdr-app ls` and rename it, because Herdr otherwise titles them from the program or the agent's chat: `herdr-app do tab.rename --id <worker-tab-id> --name "Change Tree · worker"` and `herdr-app do tab.rename --id <server-tab-id> --name "Change Tree · server"`. Check the new names in `herdr-app ls`. Read the server output with `hc read <server>`. If needed, use `hc wait <server> --output CHANGE_TREE_URL --timeout 15` and read again. Use the URL from the `CHANGE_TREE_URL` line. If the server exits, report the error and close the unused worker.
+5. Open that URL with `open "$url"` on macOS and tell the user the URL and the two tab names ("Change Tree · worker" and "Change Tree · server") with their terminal IDs. Keep the server and worker available while the page is in use.
 
 ## Worker mode
 
