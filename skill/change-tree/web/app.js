@@ -95,7 +95,7 @@ function usedByTree(file) {
   const direct = paths.filter((path) => depth[path] === 1).length;
   const more = paths.length - shown.length;
   return `<p class="used-by-count">${paths.length} ${paths.length === 1 ? 'file' : 'files'} · ${direct} import it directly</p>
-    <ul class="ub-tree" aria-label="Files that use ${esc(file.name)}"><li><span class="ub-dir">${esc(state.repo || 'repository')}/</span><ul>${branch(root)}</ul></li></ul>
+    <ul class="ub-tree" tabindex="0" aria-label="Files that use ${esc(file.name)}. Scroll to see all."><li><span class="ub-dir">${esc(state.repo || 'repository')}/</span><ul>${branch(root)}</ul></li></ul>
     ${more > 0 ? `<p class="used-by-count">${more} more not shown</p>` : ''}`;
 }
 const summaryFallback = () => state.summaryError || 'Summarizing…';
