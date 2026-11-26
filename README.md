@@ -23,7 +23,8 @@
   <a href="#review-changes">Review changes</a> ·
   <a href="#impact-score">Impact score</a> ·
   <a href="#settings">Settings</a> ·
-  <a href="#troubleshooting">Troubleshooting</a>
+  <a href="#troubleshooting">Troubleshooting</a> ·
+  <a href="#screenshots">Screenshots</a>
 </p>
 
 ![Impact Tree review page for a sample cart discount change. The dependency tree is on the left and the review overview is on the right.](docs/preview.webp)
@@ -135,3 +136,18 @@ python3 /path/to/impact-tree/skill/impact-tree/scripts/ct.py stop \
   --repo /path/to/repository
 ```
 
+## Screenshots
+
+These views use the same sample cart discount change as the overview.
+
+### File diff
+
+![File diff with an AI summary, the Used by tree, and a side-by-side view of the price calculation.](docs/file-diff.webp)
+
+### Comparison picker
+
+![Comparison picker with base and target selectors, a list of branches, and the task summary.](docs/compare-picker.webp)
+
+### Change chat
+
+![Change chat in full-size mode with test suggestions and links to the relevant lines.](docs/change-chat.webp)
