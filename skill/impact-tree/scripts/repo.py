@@ -60,31 +60,38 @@ def worktrees(root):
             fields[key] = os.fsdecode(value)
         if b"worktree" not in fields or b"bare" in fields or b"prunable" in fields:
             continue
-        path = str(Path(fields[b"worktree"]).resolve())
+        path = Path(fields[b"worktree"]).resolve()
         branch = fields.get(b"branch", "").removeprefix("refs/heads/")
-        is_current = path == str(root)
-        label = branch or fields.get(b"HEAD", "")[:7] or Path(path).name
+        is_current = path == root
+        label = branch or fields.get(b"HEAD", "")[:7] or path.name
         result.append({
-            "value": "WORKTREE" if is_current else path, "path": path,
+            "value": "WORKTREE" if is_current else str(path), "path": str(path),
             "label": f"Worktree · {label}", "commit": fields.get(b"HEAD"),
-            "note": "This checkout, with its uncommitted changes" if is_current else path,
+            "note": "This checkout, with its uncommitted changes" if is_current else str(path),
         })
     return result
+
+
+WORKTREE_EDITING_SUPPORTED = os.name != "nt"
+WINDOWS_READ_ONLY = "File editing is unavailable on Windows."
+WORKTREE_PATH_PREFIXES = tuple(
+    prefix + separator for prefix in (".", "..", "~") for separator in (os.sep, os.altsep) if separator
+)
 
 
 def comparison(root, base, head, task="", pr=None):
     base_commit = commit(root, base)
     target = root
     if head != "WORKTREE":
-        if os.path.isabs(head) or head.startswith(("./", "../", "~/")):
+        if os.path.isabs(head) or head.startswith(WORKTREE_PATH_PREFIXES):
             target = (root / Path(head).expanduser()).resolve()
-            if not any(entry["path"] == str(target) for entry in worktrees(root)):
+            if not any(Path(entry["path"]) == target for entry in worktrees(root)):
                 raise ChangeTreeError("Compare path must be a worktree of this repository.")
             if target == root:
                 head = "WORKTREE"
         else:
             candidate = (root / head).resolve()
-            if candidate.exists() and any(entry["path"] == str(candidate) for entry in worktrees(root)):
+            if candidate.exists() and any(Path(entry["path"]) == candidate for entry in worktrees(root)):
                 target = candidate
                 if target == root:
                     head = "WORKTREE"
@@ -94,7 +101,7 @@ def comparison(root, base, head, task="", pr=None):
         head_commit = commit(target, "HEAD")
         diff_base = base_commit
         head_label = "Working tree" if head == "WORKTREE" else next(
-            entry["label"] for entry in worktrees(root) if entry["path"] == str(target)
+            entry["label"] for entry in worktrees(root) if Path(entry["path"]) == target
         )
         semantics = "Base commit → working tree, including untracked files"
     else:
@@ -102,13 +109,17 @@ def comparison(root, base, head, task="", pr=None):
         diff_base = decode(git(root, "merge-base", base_commit, head_commit)).strip()
         head_label = head
         semantics = f"Three-dot diff · merge base {diff_base[:7]} → {head_label}"
-    return {
+    result = {
         "base": base, "head": str(target) if target != root else head, "task": task.strip(), "pr": pr,
         "baseLabel": f"HEAD · {base_commit[:7]}" if base == "HEAD" else base,
         "headLabel": head_label, "baseCommit": base_commit, "headCommit": head_commit,
         "diffBase": diff_base, "mode": "worktree" if is_worktree else "three-dot",
-        "description": semantics, "target": str(target), "editable": head == "WORKTREE",
+        "description": semantics, "target": str(target),
+        "editable": head == "WORKTREE" and WORKTREE_EDITING_SUPPORTED,
     }
+    if head == "WORKTREE" and not WORKTREE_EDITING_SUPPORTED:
+        result["editUnavailable"] = WINDOWS_READ_ONLY
+    return result
 
 
 EXCLUDE_GRAPH = ":(exclude,top)graphify-out"

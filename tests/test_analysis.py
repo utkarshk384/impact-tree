@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import os
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
@@ -21,6 +22,7 @@ class GitRepoMixin:
         self.run_git("config", "user.name", "Fixture")
         self.run_git("config", "user.email", "fixture@example.test")
         self.run_git("config", "commit.gpgsign", "false")
+        self.run_git("config", "core.autocrlf", "false")
 
     def run_git(self, *args):
         return repo.git(self.root, *args)
@@ -28,10 +30,7 @@ class GitRepoMixin:
     def write(self, path, contents):
         file = self.root / path
         file.parent.mkdir(parents=True, exist_ok=True)
-        if isinstance(contents, bytes):
-            file.write_bytes(contents)
-        else:
-            file.write_text(contents, encoding="utf-8")
+        file.write_bytes(contents.encode("utf-8") if isinstance(contents, str) else contents)
         return file
 
     def commit(self, message="fixture"):
@@ -67,13 +66,14 @@ class GitFixture(GitRepoMixin, unittest.TestCase):
         self.assertEqual(files["image.dat"]["hunks"], [])
 
     def test_plain_rename_detected_with_literal_names(self):
-        before = self.write("old\tfile.py", "def function():\n    return 123\n")
+        old_name, new_name = ("old [file].py", "new é.py") if os.name == "nt" else ("old\tfile.py", "new\nfile.py")
+        before = self.write(old_name, "def function():\n    return 123\n")
         self.commit()
-        before.rename(self.root / "new\nfile.py")
+        before.rename(self.root / new_name)
         _, files = self.diff()
-        new = files["new\nfile.py"]
+        new = files[new_name]
         self.assertEqual(new["status"], "M")
-        self.assertEqual(new["oldPath"], "old\tfile.py")
+        self.assertEqual(new["oldPath"], old_name)
         self.assertEqual(new["hunks"], [])
 
     def test_hunk_gap_and_content_hash(self):
@@ -108,6 +108,8 @@ class GitFixture(GitRepoMixin, unittest.TestCase):
         comp, files = self.diff("main", str(other))
         self.assertEqual(set(files), {"only-main", "topic.txt", "untracked.txt"})
         self.assertFalse(comp["editable"])
+        relative, _ = self.diff("main", f".{os.sep}checkout")
+        self.assertEqual(Path(relative["target"]), other)
 
     def test_css_and_deleted_importers(self):
         self.write("src/base.css", "@import './outgoing.css';\n")

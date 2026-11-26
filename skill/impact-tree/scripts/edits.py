@@ -7,7 +7,7 @@ from pathlib import PurePosixPath
 import secrets
 import stat
 
-from repo import hunk_matches
+from repo import WINDOWS_READ_ONLY, WORKTREE_EDITING_SUPPORTED, hunk_matches
 
 
 class EditError(Exception):
@@ -17,7 +17,6 @@ class EditError(Exception):
 
 
 CHANGED = "The file changed on disk. Compare again to load the latest version."
-DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 
 
 def read_file(directory, name):
@@ -73,6 +72,8 @@ def revised_content(data, hunks, edits):
 
 
 def save_file(root, file, expected_hash, edits):
+    if not WORKTREE_EDITING_SUPPORTED:
+        raise EditError(WINDOWS_READ_ONLY, 403)
     raw_path = file["path"]
     parts = PurePosixPath(raw_path).parts
     if (not parts or raw_path.startswith("/") or parts[0] == "graphify-out"
@@ -84,14 +85,15 @@ def save_file(root, file, expected_hash, edits):
         raise EditError(CHANGED, 409)
     if not isinstance(edits, list) or not edits or len(edits) > len(file["hunks"]):
         raise EditError("Send at least one edited block.")
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     with ExitStack() as directories:
-        fd = os.open(root, DIRECTORY_FLAGS)
+        fd = os.open(root, directory_flags)
         directories.callback(os.close, fd)
         name = parts[-1]
         temp = None
         try:
             for part in parts[:-1]:
-                fd = os.open(part, DIRECTORY_FLAGS, dir_fd=fd)
+                fd = os.open(part, directory_flags, dir_fd=fd)
                 directories.callback(os.close, fd)
             data, info = read_file(fd, name)
             if hashlib.sha256(data).hexdigest() != expected_hash:

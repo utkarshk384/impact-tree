@@ -354,7 +354,7 @@ class State:
             previous = self.get()
             comp = previous["comparison"]
             if not comp.get("editable") or comp.get("head") != "WORKTREE":
-                raise EditError("Choose the current working tree to edit files.", 403)
+                raise EditError(comp.get("editUnavailable") or "Choose the current working tree to edit files.", 403)
             if body.get("snapshot") != previous["snapshot"]:
                 raise EditError(CHANGED, 409)
             file = next((file for file in previous["files"] if file["path"] == body.get("path")), None)

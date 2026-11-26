@@ -58,6 +58,8 @@ Use the same arguments when you invoke the skill in Codex or run the standalone 
 - Git and the `graphify` command on your `PATH`. [Install Graphify](https://github.com/Graphify-Labs/graphify#install).
 - GitHub CLI (`gh`) with an active login, if you want the pull request picker
 
+Windows PowerShell supports comparisons, the dependency tree, summaries, and change chat. In-browser edits are available on macOS and Linux.
+
 ### Install from the repository marketplace
 
 #### Claude Code
@@ -92,15 +94,15 @@ git clone https://github.com/utkarshk384/impact-tree-public.git
 cd impact-tree-public
 ```
 
-Run the installation command for your agent.
+Run the installation command for your agent and shell.
 
-| Agent | Command |
-| --- | --- |
-| Claude Code | `./install.sh claude` |
-| Codex | `./install.sh codex` |
-| Both | `./install.sh both` |
+| Agent | macOS or Linux shell | Windows PowerShell |
+| --- | --- | --- |
+| Claude Code | `python3 install.py claude` | `python .\install.py claude` |
+| Codex | `python3 install.py codex` | `python .\install.py codex` |
+| Both | `python3 install.py both` | `python .\install.py both` |
 
-The installer links the skill to this clone. It also adds a marked section to the agent's global instructions. Add `--no-instructions` to the installation command to skip that section.
+Use `py -3` in PowerShell if you use the Windows Python launcher. The installer links the skill to this clone and adds a marked section to the agent's global instructions. Add `--no-instructions` to skip that section. The `./install.sh` command also runs the Python installer on macOS and Linux.
 
 ## Review changes
 
@@ -112,7 +114,7 @@ The installer links the skill to this clone. It also adds a marked section to th
 
 Use the bars between change blocks to show unchanged lines. Press `C` to open **Change chat**. The chat can include the current file, the change block, or selected text as context.
 
-### Edit a change
+### Edit a change on macOS or Linux
 
 1. Choose **Working tree** as the comparison target.
 2. Open the file you want to edit.
@@ -164,6 +166,12 @@ To stop the local server, ask the agent that started it to stop Impact Tree. If 
 ```sh
 python3 /path/to/impact-tree/skill/impact-tree/scripts/ct.py stop \
   --repo /path/to/repository
+```
+
+In Windows PowerShell, use your Python command and quote paths that contain spaces.
+
+```powershell
+python "C:\path\to\impact-tree-public\skill\impact-tree\scripts\ct.py" stop --repo "C:\path\to\repository"
 ```
 
 ## Screenshots

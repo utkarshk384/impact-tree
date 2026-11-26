@@ -10,6 +10,7 @@ from unittest.mock import patch
 from test_analysis import GitRepoMixin
 from ct import analyze
 from edits import CHANGED, EditError, save_file
+from repo import WINDOWS_READ_ONLY, WORKTREE_EDITING_SUPPORTED
 from server import Server, State
 
 
@@ -27,6 +28,7 @@ class ServerFixture(GitRepoMixin, unittest.TestCase):
     def get_file(self):
         return analyze(self.root)["files"][0]
 
+    @unittest.skipUnless(WORKTREE_EDITING_SUPPORTED, "Requires guarded worktree edits")
     def test_save_writes_only_server_owned_range_and_rejects_stale_hash(self):
         file = self.get_file()
         digest = file["contentHash"]
@@ -38,6 +40,7 @@ class ServerFixture(GitRepoMixin, unittest.TestCase):
             save_file(self.root, file, digest, edits)
         self.assertEqual(error.exception.status, 409)
 
+    @unittest.skipUnless(WORKTREE_EDITING_SUPPORTED, "Requires guarded worktree edits")
     def test_rejects_traversal_and_symlinked_parent(self):
         file = self.get_file()
         digest = file["contentHash"]
@@ -53,6 +56,7 @@ class ServerFixture(GitRepoMixin, unittest.TestCase):
                 save_file(self.root, file, digest, edits)
             self.assertEqual((outside / "sample.py").read_bytes(), b"first = 10\nsecond = 2\n")
 
+    @unittest.skipUnless(WORKTREE_EDITING_SUPPORTED, "Requires guarded worktree edits")
     def test_multi_hunk_save_preserves_crlf_and_missing_final_newline(self):
         base = [f"line {index}" for index in range(30)]
         self.write("sample.txt", "\r\n".join(base).encode("utf-8"))
@@ -137,6 +141,8 @@ class ServerFixture(GitRepoMixin, unittest.TestCase):
             self.assertEqual(self.request(server, "POST", "/api/compare", {}, Origin="https://another.test",
                                          **{"X-Change-Tree-Token": server.token})[0], 403)
             _, state = self.request(server, "GET", "/api/state")
+            if not WORKTREE_EDITING_SUPPORTED:
+                return
             self.assertEqual(self.request(server, "POST", "/api/save",
                                          {"snapshot": state["snapshot"], "path": "unchanged.py"}, **same_origin)[0], 404)
             file = state["files"][0]
@@ -150,6 +156,19 @@ class ServerFixture(GitRepoMixin, unittest.TestCase):
             self.assertEqual(self.request(server, "POST", "/api/compare",
                                           {"base": "HEAD", "head": "HEAD"}, **same_origin)[0], 200)
             self.assertEqual(self.request(server, "POST", "/api/save", {}, **same_origin)[0], 403)
+
+    def test_windows_review_keeps_the_diff_and_refuses_file_edits(self):
+        with patch("repo.WORKTREE_EDITING_SUPPORTED", False), self.server() as server:
+            headers = {"Origin": server.url, "X-Change-Tree-Token": server.token}
+            status, state = self.request(server, "GET", "/api/state")
+            self.assertEqual(status, 200)
+            self.assertFalse(state["comparison"]["editable"])
+            self.assertEqual(state["comparison"]["editUnavailable"], WINDOWS_READ_ONLY)
+            self.assertEqual(state["files"][0]["path"], "dir/sample.py")
+            self.assertNotIn("contentHash", state["files"][0])
+            status, body = self.request(server, "POST", "/api/save", {}, **headers)
+            self.assertEqual(status, 403)
+            self.assertEqual(body["error"], WINDOWS_READ_ONLY)
 
 
 if __name__ == "__main__":

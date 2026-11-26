@@ -592,8 +592,9 @@ function renderFile(preserveScroll = false) {
   const comparison = state.comparison;
   const range = `${comparison.base === 'HEAD' ? 'HEAD' : comparison.baseLabel} → ${comparison.headLabel.toLowerCase() === 'working tree' ? 'working tree' : comparison.headLabel}`;
   const currentBranch = (state.refs.worktrees || []).find((item) => item.value === 'WORKTREE')?.label.split(' · ')[1];
+  const readOnlyReason = comparison.editUnavailable || 'compare against the working tree to edit';
   const editorControls = !comparison.editable ?
-    `<span class="read-only" title="Choose the working tree as Compare to edit files here">${icon('lock')} Read only · compare against the working tree to edit</span>` :
+    `<span class="read-only">${icon('lock')} Read only · ${esc(readOnlyReason)}</span>` :
     editing ? `<span class="file-editor-label">Editing in the current worktree${currentBranch ? ' · ' + esc(currentBranch) : ''}</span>
       <button type="button" class="pill surface" data-action="discard">Discard</button>
       <button type="button" class="pill primary" data-action="save">Save to file</button>` :

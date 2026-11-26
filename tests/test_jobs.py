@@ -10,7 +10,7 @@ from unittest.mock import patch
 from test_analysis import GitRepoMixin
 import ct
 from jobs import Jobs, request, submit, wait
-from repo import ChangeTreeError
+from repo import ChangeTreeError, WORKTREE_EDITING_SUPPORTED
 from server import Server, State, read_json, write_json
 
 
@@ -179,9 +179,16 @@ class JobsFixture(GitRepoMixin, unittest.TestCase):
                        {"reply": "Answer", "references": [{"path": "setting00.py", "line": True}]}):
             with self.subTest(result=result), self.assertRaises(ChangeTreeError):
                 self.done(job, result)
-        (self.root / "outside").symlink_to(self.root.parent, target_is_directory=True)
-        (self.root / "git-alias").symlink_to(self.root / ".git", target_is_directory=True)
-        for path in ("../outside", "/tmp/outside", "C:\\outside", "outside/file.py", ".git/config", "git-alias/config"):
+        unsafe_paths = ["../outside", "/tmp/outside", "C:\\outside", ".git/config"]
+        try:
+            (self.root / "outside").symlink_to(self.root.parent, target_is_directory=True)
+            (self.root / "git-alias").symlink_to(self.root / ".git", target_is_directory=True)
+        except OSError as error:
+            if getattr(error, "winerror", None) != 1314:  # Windows user cannot create symbolic links.
+                raise
+        else:
+            unsafe_paths.extend(["outside/file.py", "git-alias/config"])
+        for path in unsafe_paths:
             with self.subTest(path=path), self.assertRaisesRegex(ChangeTreeError, "inside the repository"):
                 self.done(job, {"reply": "Answer", "references": [{"path": path, "line": 1}]})
         self.assertEqual(self.state.get()["chatStatus"], "pending")
@@ -266,6 +273,8 @@ class JobsFixture(GitRepoMixin, unittest.TestCase):
         self.assertEqual(reopened["summaryStatus"], "complete", reopened.get("error"))
         self.no_job()
 
+        if not WORKTREE_EDITING_SUPPORTED:
+            return
         file = self.state.get()["files"][0]
         saved = self.state.save({"snapshot": start["snapshot"], "hash": file["contentHash"], "path": file["path"],
                                  "edits": [{"index": 0, "text": "SETTING = 2"}]})
