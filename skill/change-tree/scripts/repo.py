@@ -26,8 +26,8 @@ def decode(data):
     return data.decode("utf-8", errors="replace")
 
 
-def git(root, *args, env=None, input=None):
-    result = command(["git", "--no-optional-locks", "-C", str(root), *args], None, env=env, input=input)
+def git(root, *args, env=None, input=None, timeout=None):
+    result = command(["git", "--no-optional-locks", "-C", str(root), *args], None, env=env, input=input, timeout=timeout)
     if result.returncode:
         raise ChangeTreeError(decode(result.stderr).strip() or "Git command failed.")
     return result.stdout
@@ -336,7 +336,7 @@ def refs(root):
                     number, base, head = pr["number"], pr["baseRefName"], pr["headRefName"]
                     pulls.append({"value": number, "label": f"PR #{number} · {head} → {base}",
                                   "note": pr["title"], "base": best_ref(base), "head": best_ref(head),
-                                  "fetchHead": best_ref(head) not in known or pr.get("isCrossRepository", False)})
+                                  "remote": remote, "fetchHead": best_ref(head) not in known or pr.get("isCrossRepository", False)})
         except (OSError, ValueError, KeyError, subprocess.TimeoutExpired):
             pass
     return {"commits": commits, "branches": branches, "origins": origins,

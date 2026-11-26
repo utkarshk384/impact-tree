@@ -450,6 +450,7 @@ def analyze(root, comp, graph, files):
         distances = reach_from(path, reverse)
         type_score, reason = change_type(target, revision, file, distances, packages.get(path))
         score_file(file, distances, type_score, reason, by_path, reference)
+        file["changeKind"] = category(path)
         prior = file.get("previousImporters")
         if prior:
             preferred = sorted(dropped_imports[path]) or prior

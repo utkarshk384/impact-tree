@@ -13,7 +13,7 @@ import impact
 import repo
 
 
-class GitFixture(unittest.TestCase):
+class GitRepoMixin:
     def setUp(self):
         temp = TemporaryDirectory()
         self.addCleanup(temp.cleanup)
@@ -43,6 +43,8 @@ class GitFixture(unittest.TestCase):
         comp = repo.comparison(self.root, base, head)
         return comp, {file["path"]: file for file in repo.parse_diff(repo.read_diff(comp))}
 
+
+class GitFixture(GitRepoMixin, unittest.TestCase):
     def test_worktree_reads_disk_includes_untracked_and_preserves_index(self):
         self.write(".gitignore", "ignored.txt\n")
         self.write("main.py", "old\n")

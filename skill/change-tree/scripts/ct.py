@@ -35,6 +35,11 @@ def main(argv=None):
             compare_options(sub)
         if name in ("analyze", "refs"):
             sub.add_argument("--json", action="store_true")
+    serve_parser = subs.add_parser("serve")
+    serve_parser.add_argument("--repo", default=".")
+    serve_parser.add_argument("--port", type=int, default=0)
+    serve_parser.add_argument("--worker", required=True)
+    compare_options(serve_parser)
     args = parser.parse_args(argv)
     try:
         root = repo.preflight(args.repo)
@@ -43,6 +48,9 @@ def main(argv=None):
         elif args.command == "graph":
             impact.refresh_graph(root)
             print(root / "graphify-out" / "graph.json")
+        elif args.command == "serve":
+            from server import serve
+            serve(root, analyze, args)
         elif args.command == "refs":
             print(json.dumps(repo.refs(root), indent=None if args.json else 2))
         else:
