@@ -721,7 +721,7 @@ function renderPreview(preview, scrollTop) {
   const ref = state.view?.label || state.comparison.headLabel;
   dialog.innerHTML = `
     <aside class="file-side panel" aria-label="File details">
-      <button type="button" class="pill surface" data-action="back">${icon('back', 16)} Back to tree</button>
+      <button type="button" class="pill surface" data-action="back" aria-label="Back to directory">${icon('back', 16)} Back</button>
       <div><h2>${esc(preview.path.split('/').pop())}</h2><div class="file-path compact muted">${esc(preview.path)}</div></div>
       ${state.view ? '' : '<div class="subtle">Unchanged in this comparison</div>'}
     </aside>
@@ -911,8 +911,12 @@ function renderPicker() {
     button.setAttribute('aria-pressed', String(button.dataset.mode === draft.mode));
   }
   $('picker-sides').hidden = $('task-disclosure').hidden = viewing;
-  $('pick-view').hidden = !viewing;
-  $('pick-view').textContent = draft.view?.label || 'Choose a reference';
+  const viewSelection = $('pick-view');
+  const viewLabel = draft.view?.label || '';
+  viewSelection.hidden = !viewing;
+  viewSelection.title = viewLabel;
+  viewSelection.classList.toggle('mono', Boolean(viewLabel));
+  viewSelection.textContent = viewLabel || 'Choose a reference';
   const searchLabel = viewing ? 'Search commits, branches, origins and worktrees' : 'Search commits, branches, origins, worktrees and PRs';
   $('ref-search-label').textContent = searchLabel;
   const submit = $('picker').querySelector('[data-action="compare"]');

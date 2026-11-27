@@ -320,7 +320,6 @@ b { font-weight: 600; }
   box-shadow: 0 0 0 1px #303030, 0 24px 64px -16px #000; z-index: 7; display: flex; flex-direction: column; gap: 8px;
 }
 .picker > * { flex: none; }
-#picker-mode { align-self: flex-start; }
 .pr-link { display: flex; align-items: center; gap: 8px; padding: 4px 6px 4px 8px; border-radius: 8px; background: #1c2942; color: #cfe0ff; font-size: 12px; }
 .pr-link .spacer { min-width: 0; overflow-wrap: anywhere; }
 .pr-link .pill { min-height: 30px; padding: 0 10px; background: #26365a; }
@@ -329,9 +328,17 @@ b { font-weight: 600; }
 .picker-sides button[aria-pressed="true"] { border-color: #8b8b8b; background: #2b2b2b; }
 .picker-sides span { display: block; color: var(--muted); font-size: 11px; }
 .picker-sides b { display: block; font: 500 12px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.picker-tabs { padding: 2px; gap: 2px; border-radius: 8px; background: #191919; }
-.picker-tabs button { flex: 1; min-height: 30px; padding: 0 4px; border-radius: 6px; color: var(--muted); font-size: 12px; font-weight: 500; }
-.picker-tabs button[aria-pressed="true"] { background: #303030; color: var(--text); }
+.picker-segments { padding: 2px; gap: 2px; border-radius: 8px; background: #191919; }
+.picker-segments button { min-height: 30px; border-radius: 6px; color: var(--muted); font-size: 12px; font-weight: 500; }
+.picker-segments button[aria-pressed="true"] { background: #303030; color: var(--text); }
+#picker-mode { align-self: flex-start; }
+#picker-mode button { padding-inline: 10px; }
+#pick-view {
+  padding: 7px 8px; border: 1px solid #363636; border-radius: 8px; background: #262626;
+  color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+#pick-view.mono { color: var(--text); }
+.picker-tabs button { flex: 1; padding-inline: 4px; }
 .search { position: relative; }
 .search [data-icon] { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--subtle); pointer-events: none; }
 .search input, .task-input textarea { width: 100%; border: 1px solid #333; border-radius: 8px; background: #161616; }
@@ -402,7 +409,8 @@ b { font-weight: 600; }
   .layout-label, .header-actions #agent-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   .header-actions .keys-button, .header-actions .agent-button { min-width: 28px; }
   .header-actions .keys-button { padding-inline: 3px; }
-  .picker-tabs button { padding-inline: 3px; font-size: 11px; }
+  .picker-segments button { font-size: 11px; }
+  .picker-tabs button { padding-inline: 3px; }
   .directory { padding-inline: 8px; }
   .directory-list { --viewed-width: 48px; --directory-row-padding: 8px; --directory-indent: 14px; }
   .dir-heading, .dir-entry { min-width: 366px; }

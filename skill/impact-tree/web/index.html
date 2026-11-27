@@ -66,7 +66,7 @@
   <section class="file-dialog" id="file-dialog" role="dialog" aria-label="File changes" hidden></section>
 
   <section class="picker" id="picker" role="dialog" aria-label="Choose references" hidden>
-    <div class="segmented" role="group" aria-label="Picker mode" id="picker-mode">
+    <div class="segmented picker-segments" role="group" aria-label="Picker mode" id="picker-mode">
       <button type="button" data-action="picker-mode" data-mode="compare" aria-pressed="true">Compare</button>
       <button type="button" data-action="picker-mode" data-mode="view" aria-pressed="false">View files</button>
     </div>
@@ -78,8 +78,8 @@
       <button type="button" data-action="base" aria-pressed="true"><span>Base (before)</span><b id="pick-base"></b></button>
       <button type="button" data-action="head" aria-pressed="false"><span>Compare (after)</span><b id="pick-head"></b></button>
     </div>
-    <div class="mono" id="pick-view" aria-live="polite" hidden></div>
-    <div class="segmented picker-tabs" role="group" aria-label="Reference type" id="picker-tabs"></div>
+    <div id="pick-view" aria-live="polite" hidden></div>
+    <div class="segmented picker-segments picker-tabs" role="group" aria-label="Reference type" id="picker-tabs"></div>
     <div class="search">
       <span data-icon="search"></span>
       <label for="ref-search" id="ref-search-label" class="sr-only">Search commits, branches, origins, worktrees and PRs</label>
