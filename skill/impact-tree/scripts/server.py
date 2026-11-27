@@ -16,7 +16,7 @@ from threading import Condition, Lock, Thread
 from urllib.parse import urlsplit
 
 from edits import CHANGED, EditError, save_file
-from repo import ChangeTreeError, decode, git, refs
+from repo import ChangeTreeError, browse_target, decode, git, refs
 
 
 WEB = Path(__file__).resolve().parents[1] / "web"
@@ -243,10 +243,11 @@ class State:
         return self.cache / "comparisons" / (snapshot + ".json")
 
     def publish(self, result, previous=None, edited_path=None):
-        snapshot = hashlib.sha256(json_bytes(result)).hexdigest()
+        viewing = bool(result.get("view"))
+        snapshot = secrets.token_hex(32) if viewing else hashlib.sha256(json_bytes(result)).hexdigest()
         path = self.comparison_path(snapshot)
         with self.jobs.condition if self.jobs else nullcontext():
-            cached = read_json(path, {}) if not result["error"] else {}
+            cached = read_json(path, {}) if not viewing and not result["error"] else {}
             summaries = current_summaries(cached.get("summaries", {}))
             if previous and previous["snapshot"] != snapshot:
                 retained = {file["path"] for file in result["files"] if file["path"] != edited_path}
@@ -254,7 +255,7 @@ class State:
                 summaries = {**summaries, "files": {**{path: value for path, value in saved.items() if path in retained},
                                                    **summaries.get("files", {})}}
             chat = {"chat": [], "chatStatus": "idle"}
-            if not result["error"]:
+            if not viewing and not result["error"]:
                 cache_json(path, {"analysis": result, "summaries": summaries})
                 if self.jobs:
                     chat = self.jobs.open_chat(snapshot)
@@ -326,24 +327,53 @@ class State:
                     comparison["description"] = f"Three-dot diff · merge base {comparison['diffBase'][:7]} → {label}"
             return self.publish(result)
 
+    def view(self, body):
+        kind, ref = body.get("kind"), body.get("ref")
+        if (kind not in ("branches", "commits", "origins", "worktrees")
+                or not isinstance(ref, str) or not ref or len(ref) > 4096 or "\x00" in ref):
+            raise EditError("Choose a valid branch, commit, remote branch, or worktree.")
+        with self.operations:
+            try:
+                target = browse_target(self.root, kind, ref)
+            except (ChangeTreeError, OSError, UnicodeError, subprocess.TimeoutExpired) as error:
+                raise EditError("Could not open the selected reference.") from error
+            comparison = self.result.get("lastComparison", self.result["comparison"])
+            return self.publish({"repo": self.root.name, "view": target, "comparison": {},
+                                 "lastComparison": comparison, "files": [], "layout": {}, "error": None})
+
     def directory_paths(self, snapshot=None):
         with self.operations:
             current = self.result
             if snapshot is not None and snapshot != current["snapshot"]:
                 raise EditError(CHANGED, 409)
             if current["loading"] or current["error"]:
-                raise EditError("Choose a comparison to list its files.", 409)
+                raise EditError("Choose a reference to list its files.", 409)
             if self.directory_cache and self.directory_cache["snapshot"] == current["snapshot"]:
                 return self.directory_cache
             comp = current["comparison"]
+            view = current.get("view")
+            if view:
+                target = Path(view["target"]) if "target" in view else None
+            else:
+                target = Path(comp["target"]) if comp["head"] == "WORKTREE" else None
             try:
-                if comp["head"] == "WORKTREE":
-                    raw = git(Path(comp["target"]), "ls-files", "--cached", "--others", "--exclude-standard",
+                if target:
+                    if view and target.resolve() != target:
+                        raise EditError("The selected worktree moved. Choose it again.", 404)
+                    raw = git(target, "ls-files", "--cached", "--others", "--exclude-standard",
                               "--deduplicate", "-z", timeout=15)
                 else:
-                    raw = git(self.root, "ls-tree", "-rz", "--name-only", comp["headCommit"], timeout=15)
-            except (ChangeTreeError, subprocess.TimeoutExpired) as error:
-                raise EditError("Could not list the files in the comparison target.", 500) from error
+                    head = view["commit"] if view else comp["headCommit"]
+                    raw = git(self.root, "ls-tree", "-rz", "--name-only", head, timeout=15)
+            except (ChangeTreeError, RuntimeError, subprocess.TimeoutExpired) as error:
+                raise EditError("Could not list the files in the selected reference.", 500) from error
+            if view:
+                entries = raw.split(b"\0")[:-1]
+                paths = [decode(entry) for entry in entries
+                         if not target or os.path.lexists(target / os.fsdecode(entry))]
+                self.directory_cache = {"snapshot": current["snapshot"], "paths": list(dict.fromkeys(paths)),
+                                        "truncated": False}
+                return self.directory_cache
             paths = []
             start = 0
             while start < len(raw) and len(paths) < DIRECTORY_PATH_LIMIT:
@@ -355,51 +385,63 @@ class State:
             return self.directory_cache
 
     def worktree_file(self, comp, name, *, allow_links=True):
-        target = Path(comp["target"]).resolve()
-        candidate = target / name
+        checkout = Path(comp["target"])
         try:
+            target = checkout.resolve()
+            candidate = target / name
             path = candidate.resolve()
         except (OSError, RuntimeError) as error:
             raise EditError("Could not read the file in the compared worktree.", 404) from error
         if target not in path.parents or not path.is_file():
             raise EditError("The file is outside the compared worktree.", 404)
-        if not allow_links and path != candidate:
+        if not allow_links and (path != candidate or target != checkout):
             raise EditError("Symbolic links have no working tree preview.", 404)
         return path
 
-    def unchanged_text(self, current, name):
+    def preview_text(self, current, name):
         listing = self.directory_paths(current["snapshot"])
         if name not in listing["paths"]:
-            raise EditError("This file is outside the comparison's file list.", 404)
+            raise EditError("This file is outside the selected reference's file list.", 404)
         comp = current["comparison"]
+        view = current.get("view")
         try:
-            if comp["head"] == "WORKTREE":
-                path = self.worktree_file(comp, name, allow_links=False)
-                size = path.stat().st_size
+            if (view and "target" in view) or comp.get("head") == "WORKTREE":
+                path = self.worktree_file(view or comp, name, allow_links=False)
+                with path.open("rb") as stream:
+                    data = stream.read(MAX_PREVIEW_BYTES + 1)
             else:
-                size = int(git(self.root, "cat-file", "-s", f"{comp['headCommit']}:{name}"))
-            if size > MAX_PREVIEW_BYTES:
-                raise EditError("This file is too large to preview.", 413)
-            if comp["head"] == "WORKTREE":
-                data = path.read_bytes()[:MAX_PREVIEW_BYTES + 1]
-            else:
-                data = git(self.root, "cat-file", "blob", f"{comp['headCommit']}:{name}")
-        except (ChangeTreeError, OSError, ValueError) as error:
-            raise EditError("Could not read the file in the comparison target.", 404) from error
+                head = view["commit"] if view else comp["headCommit"]
+                blob = f"{head}:{name}"
+                if int(git(self.root, "cat-file", "-s", blob, timeout=15)) > MAX_PREVIEW_BYTES:
+                    raise EditError("This file is too large to preview.", 413)
+                data = git(self.root, "cat-file", "blob", blob, timeout=15)
+        except (ChangeTreeError, OSError, ValueError, subprocess.TimeoutExpired) as error:
+            raise EditError("Could not read the file in the selected reference.", 404) from error
+        if len(data) > MAX_PREVIEW_BYTES:
+            raise EditError("This file is too large to preview.", 413)
         if b"\0" in data:
             raise EditError("Binary files have no text preview.", 415)
         return {"text": decode(data)}
+
+    def view_file(self, body):
+        current = self.get()
+        if not current.get("view") or body.get("snapshot") != current["snapshot"]:
+            raise EditError("The selected reference changed. Open the file again.", 409)
+        name = body.get("path")
+        if not isinstance(name, str) or not name:
+            raise EditError("Choose a file to view.")
+        return self.preview_text(current, name)
 
     def lines(self, body):
         """Return diff context lines or the full text of an unchanged file."""
         current = self.get()
         comp = current["comparison"]
-        if not current["snapshot"] or body.get("snapshot") != current["snapshot"]:
+        if current.get("view") or not current["snapshot"] or body.get("snapshot") != current["snapshot"]:
             raise EditError(CHANGED, 409)
         name = body.get("path")
         file = next((file for file in current["files"] if file["path"] == name), None)
         if body.get("full") is True and file is None and isinstance(name, str):
-            return self.unchanged_text(current, name)
+            return self.preview_text(current, name)
         if file is None or file["status"] == "D" or file.get("binary"):
             raise EditError("This file has no unchanged lines to show.", 404)
         start, end = body.get("start"), body.get("end")
@@ -548,6 +590,10 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == "/api/compare":
                 self.json(200, state.compare(self.body()))
+            elif path == "/api/view":
+                self.json(200, state.view(self.body()))
+            elif path == "/api/file":
+                self.json(200, state.view_file(self.body()))
             elif path == "/api/save":
                 self.json(200, state.save(self.body()))
             elif path == "/api/settings":

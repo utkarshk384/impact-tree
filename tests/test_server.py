@@ -10,6 +10,7 @@ from unittest.mock import patch
 from test_analysis import GitRepoMixin
 from ct import analyze
 from edits import CHANGED, EditError, save_file
+from jobs import Jobs
 from repo import git
 from server import Server, State
 
@@ -74,8 +75,8 @@ class ServerFixture(GitRepoMixin, unittest.TestCase):
         self.assertEqual((self.root / file["path"]).read_bytes(), "\r\n".join(expected).encode("utf-8"))
 
     @contextmanager
-    def server(self):
-        state = State(self.root, analyze, cache=self.cache)
+    def server(self, job_factory=None):
+        state = State(self.root, analyze, cache=self.cache, job_factory=job_factory)
         state.compare({"base": "HEAD", "head": "WORKTREE"})
         with Server(state, 0) as server:
             thread = Thread(target=server.serve_forever)
@@ -83,6 +84,8 @@ class ServerFixture(GitRepoMixin, unittest.TestCase):
             try:
                 yield server
             finally:
+                if state.jobs:
+                    state.jobs.close()
                 server.shutdown()
                 thread.join()
 
@@ -214,6 +217,112 @@ class ServerFixture(GitRepoMixin, unittest.TestCase):
             file.unlink()
             file.symlink_to(self.root / ".git" / "config")
             self.assertEqual(self.request(server, "POST", "/api/lines", request, **headers)[0], 404)
+
+    def test_view_branch_commit_and_remote_branch_use_the_selected_tree(self):
+        name = "dir/view [only] é.txt"
+        contents = "\r\n<file contents>\r\n+literal plus\r\n-literal minus"
+        self.write(name, contents)
+        self.write("image.bin", b"\x00\x01")
+        viewed = self.commit("Tree to view")
+        self.run_git("branch", "saved", viewed)
+        self.run_git("update-ref", "refs/remotes/origin/saved", viewed)
+        (self.root / name).unlink()
+        self.write("later.txt", "only in the newer commit")
+        newer = self.commit("Later tree")
+        self.run_git("branch", "origin/saved", newer)
+        with self.server() as server, patch("server.DIRECTORY_PATH_LIMIT", 1):
+            headers = {"Origin": server.url, "X-Change-Tree-Token": server.token}
+            for kind, ref in (("branches", "saved"), ("commits", viewed[:12]), ("origins", "origin/saved")):
+                with self.subTest(kind=kind):
+                    selection = {"kind": kind, "ref": ref}
+                    status, state = self.request(server, "POST", "/api/view", selection, **headers)
+                    self.assertEqual(status, 200)
+                    self.assertEqual(state["view"]["commit"], viewed)
+                    self.assertEqual(state["comparison"], {})
+                    self.assertEqual(state["files"], [])
+                    status, listing = self.request(server, "GET", "/api/paths")
+                    self.assertEqual(status, 200)
+                    self.assertEqual(listing["snapshot"], state["snapshot"])
+                    self.assertEqual(listing["paths"], ["dir/sample.py", name, "image.bin"])
+                    self.assertFalse(listing["truncated"])
+                    request = {"snapshot": state["snapshot"], "path": name}
+                    self.assertEqual(self.request(server, "POST", "/api/file", request, **headers),
+                                     (200, {"text": contents}))
+                    self.assertEqual(self.request(server, "POST", "/api/file",
+                                                  {**request, "path": "image.bin"}, **headers)[0], 415)
+                    self.assertEqual(self.request(server, "POST", "/api/file",
+                                                  {**request, "path": "later.txt"}, **headers)[0], 404)
+
+    def test_view_worktree_lists_and_reads_live_files_from_the_selected_checkout(self):
+        self.write(".gitignore", "ignored.txt\n")
+        self.write("removed.txt", "tracked before removal")
+        self.commit()
+        with TemporaryDirectory() as parent, self.server() as server:
+            linked = Path(parent).resolve() / "linked checkout"
+            self.run_git("worktree", "add", "-b", "linked", str(linked))
+            (linked / "dir" / "sample.py").write_text("linked contents\n", encoding="utf-8")
+            (linked / "removed.txt").unlink()
+            (linked / "untracked.txt").write_text("untracked", encoding="utf-8")
+            (linked / "ignored.txt").write_text("ignored", encoding="utf-8")
+            headers = {"Origin": server.url, "X-Change-Tree-Token": server.token}
+            status, state = self.request(server, "POST", "/api/view",
+                                         {"kind": "worktrees", "ref": str(linked)}, **headers)
+            self.assertEqual(status, 200)
+            self.assertEqual(state["view"]["label"], "Worktree · linked")
+            _, listing = self.request(server, "GET", "/api/paths")
+            self.assertEqual(set(listing["paths"]), {".gitignore", "dir/sample.py", "untracked.txt"})
+            request = {"snapshot": state["snapshot"], "path": "dir/sample.py"}
+            self.assertEqual(self.request(server, "POST", "/api/file", request, **headers),
+                             (200, {"text": "linked contents\n"}))
+            for path in ("../outside.txt", ".git", "ignored.txt", "removed.txt"):
+                self.assertEqual(self.request(server, "POST", "/api/file", {**request, "path": path},
+                                              **headers)[0], 404)
+            (linked / "dir" / "sample.py").unlink()
+            try:
+                (linked / "dir" / "sample.py").symlink_to(self.root / "dir" / "sample.py")
+            except OSError as error:
+                if getattr(error, "winerror", None) != 1314:
+                    raise
+            else:
+                self.assertEqual(self.request(server, "POST", "/api/file", request, **headers)[0], 404)
+            self.write("dir/sample.py", "current contents\n")
+            status, state = self.request(server, "POST", "/api/view",
+                                         {"kind": "worktrees", "ref": "WORKTREE"}, **headers)
+            self.assertEqual(status, 200)
+            self.assertEqual(self.request(server, "POST", "/api/file",
+                                          {**request, "snapshot": state["snapshot"]}, **headers),
+                             (200, {"text": "current contents\n"}))
+            self.assertEqual(self.request(server, "POST", "/api/file", request, **headers)[0], 409)
+
+    def test_view_is_read_only_and_switching_back_restores_comparison(self):
+        with self.server(job_factory=Jobs) as server:
+            headers = {"Origin": server.url, "X-Change-Tree-Token": server.token}
+            selection = {"kind": "branches", "ref": "HEAD"}
+            self.assertEqual(self.request(server, "POST", "/api/view", selection)[0], 403)
+            for invalid in ({}, {"kind": "branches", "ref": "missing"},
+                            {"kind": "worktrees", "ref": str(self.root.parent)}):
+                self.assertEqual(self.request(server, "POST", "/api/view", invalid, **headers)[0], 400)
+            status, state = self.request(server, "POST", "/api/view", selection, **headers)
+            self.assertEqual(status, 200)
+            self.assertEqual(state["summaryStatus"], "idle")
+            self.assertEqual(state["summaries"], {})
+            self.assertEqual(state["lastComparison"]["head"], "WORKTREE")
+            self.assertEqual(self.request(server, "POST", "/api/jobs/claim", {}, **headers),
+                             (200, {"job": None}))
+            request = {"snapshot": state["snapshot"], "path": "dir/sample.py"}
+            self.assertEqual(self.request(server, "POST", "/api/file", request)[0], 403)
+            self.assertEqual(self.request(server, "POST", "/api/save", request, **headers)[0], 403)
+            self.assertEqual(self.request(server, "POST", "/api/chat", request, **headers)[0], 409)
+            status, comparison = self.request(server, "POST", "/api/compare",
+                                              {"base": "HEAD", "head": "WORKTREE"}, **headers)
+            self.assertEqual(status, 200)
+            self.assertNotIn("view", comparison)
+            self.assertTrue(comparison["comparison"]["editable"])
+            self.assertEqual(comparison["files"][0]["path"], request["path"])
+            self.assertEqual(self.request(server, "POST", "/api/file", request, **headers)[0], 409)
+            status, claim = self.request(server, "POST", "/api/jobs/claim", {}, **headers)
+            self.assertEqual(status, 200)
+            self.assertEqual(claim["job"]["kind"], "files")
 
     def test_fork_pull_head_remains_available_after_unlinking(self):
         base = self.run_git("rev-parse", "HEAD").decode().strip()

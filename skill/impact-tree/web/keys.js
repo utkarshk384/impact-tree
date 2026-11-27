@@ -5,7 +5,7 @@ const SHORTCUTS = [
   ['Anywhere', [
     ['?', 'Show these shortcuts'],
     ['Ctrl K  ⌘ K', 'Open or close the command palette'],
-    ['/', 'Open the compare picker'],
+    ['/', 'Open the reference picker'],
     ['1  /  2', 'Impact view / Directory view'],
     ['j  /  k', 'Focus the next / previous file in review order'],
     ['a', 'Show or hide all dependencies'],
@@ -56,11 +56,11 @@ const SHORTCUTS = [
     ['Ctrl ⇧ Backspace', 'Clear the conversation'],
     ['Esc', 'Close the chat'],
   ]],
-  ['Compare picker', [
+  ['Reference picker', [
     ['↓  /  ↑', 'Move through the results'],
     ['Enter', 'Pick the result. A Base pick moves on to Compare.'],
     ['←  /  →', 'Switch tabs, or switch Base and Compare'],
-    ['Ctrl Enter', 'Compare'],
+    ['Ctrl Enter', 'Compare or view files'],
   ]],
 ];
 
@@ -227,10 +227,11 @@ function pickerKeys(event) {
     }
     return;
   }
-  if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') && target.closest('#picker-tabs, .picker-sides')) {
+  const group = target.closest('#picker-mode, #picker-tabs, .picker-sides');
+  if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') && group) {
     event.preventDefault();
-    const group = [...target.closest('#picker-tabs, .picker-sides').querySelectorAll('button')];
-    const next = step(group, target, event.key === 'ArrowRight' ? 1 : -1);
+    const buttons = [...group.querySelectorAll('button')].filter(visible);
+    const next = step(buttons, target, event.key === 'ArrowRight' ? 1 : -1);
     next.click();
     focus(next);
   }
@@ -238,7 +239,7 @@ function pickerKeys(event) {
 
 // Pick a result. After a Base pick, move to the Compare side so the next search sets it.
 function pickResult(button) {
-  const wasBase = draft?.side === 'base' && button.dataset.kind !== 'prs';
+  const wasBase = draft?.mode === 'compare' && draft.side === 'base' && button.dataset.kind !== 'prs';
   button.click();
   if (wasBase && draft) {
     draft.side = 'head';
@@ -350,7 +351,7 @@ function globalKeys(event) {
   else if (key === 'a') clickIn(document, '[data-action="links"]');
   else if (key === 'f') canvas?.fit?.();
   else if (key === 'j' || key === 'k') reviewStep(key === 'j' ? 1 : -1);
-  else if (key === 'o') {
+  else if (key === 'o' && !state.view) {
     const overview = $('overview');
     overview.classList.add('mobile-open');
     focus(overview.querySelector('button, [href]'));

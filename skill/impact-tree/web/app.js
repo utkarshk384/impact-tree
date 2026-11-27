@@ -45,7 +45,7 @@ let canvasView = null;
 let showUnchanged = false;
 let directoryListing = null;
 let directoryFolders = new Map();
-let unchangedPreview = null;
+let filePreview = null;
 
 try {
   showUnchanged = localStorage.getItem(UNCHANGED_KEY) === 'true';
@@ -64,6 +64,8 @@ const blockName = (count) => `${count} ${count === 1 ? 'block' : 'blocks'}`;
 const band = (score) => score >= 66 ? 'high' : score >= 33 ? 'medium' : 'low';
 const bar = (score) => `<span class="impact-bar" aria-hidden="true"><span style="width:${score}%"></span></span><span class="impact-number" aria-label="Impact ${score}">${score}</span>`;
 const selectedFile = () => state.files.find((file) => file.path === selected);
+const workspaceLayout = () => state.view ? 'directory' : layout;
+const includeAllPaths = () => Boolean(state.view || showUnchanged);
 
 const USED_BY_LIMIT = 60;
 function usedByTree(file) {
@@ -126,7 +128,7 @@ function totals(files) {
 }
 
 function refLabel(value, side) {
-  const comparison = state.comparison;
+  const comparison = state.lastComparison || state.comparison;
   if (value === comparison[side]) return comparison[side + 'Label'];
   if (value === 'WORKTREE') return 'Working tree';
   if (side === 'head') {
@@ -141,9 +143,21 @@ function refLabel(value, side) {
 }
 
 function renderHeader() {
+  const viewing = Boolean(state.view);
   $('repo-name').textContent = state.repo ? '/ ' + state.repo : '';
-  $('base-label').textContent = refLabel(draft?.base ?? state.comparison.base, 'base') || 'HEAD';
-  $('head-label').textContent = refLabel(draft?.head ?? state.comparison.head, 'head') || 'Working tree';
+  const range = pickerButton();
+  for (const part of range.querySelectorAll('[data-compare-range]')) part.hidden = viewing;
+  for (const part of range.querySelectorAll('[data-view-range]')) part.hidden = !viewing;
+  const viewLabel = $('view-label');
+  viewLabel.textContent = viewLabel.title = state.view?.label || '';
+  const comparisonDraft = draft?.mode === 'compare' ? draft : null;
+  $('base-label').textContent = refLabel(comparisonDraft?.base ?? state.comparison.base, 'base') || 'HEAD';
+  $('head-label').textContent = refLabel(comparisonDraft?.head ?? state.comparison.head, 'head') || 'Working tree';
+  for (const selector of ['.layout-toggle', '#impact-tip', '.links-button', '#agent-button', '.overview-button']) {
+    document.querySelector(selector).hidden = viewing;
+  }
+  document.body.classList.toggle('view-files', viewing);
+  if (viewing) return;
   const reachable = state.files.reduce((top, file) => (!top || file.impact.reach > top.impact.reach) ? file : top, null);
   const manifest = state.files.find((file) => file.changeKind === 'manifest');
   const standalone = state.files.find((file) => file.standalone);
@@ -172,6 +186,9 @@ function emptyMessage() {
   } else if (state.error) {
     title = state.errorCode === 3 ? 'Graph missing' : 'Analysis error';
     description = state.error;
+  } else if (state.view) {
+    title = 'No files';
+    description = 'This reference has no files to show.';
   }
   return `<div class="empty" role="status"><b>${title}</b>${esc(description)}</div>`;
 }
@@ -259,7 +276,7 @@ function changedCount() {
 
 async function loadDirectoryListing() {
   const snapshot = state.snapshot;
-  if (!showUnchanged || !snapshot || state.error || directoryListing?.snapshot === snapshot) return;
+  if (!includeAllPaths() || !snapshot || state.error || directoryListing?.snapshot === snapshot) return;
   const listing = {snapshot};
   directoryListing = listing;
   try {
@@ -276,7 +293,7 @@ async function loadDirectoryListing() {
   } catch (error) {
     listing.error = error.message;
   }
-  if (layout === 'directory' && showUnchanged && state.snapshot === snapshot && directoryListing === listing) {
+  if (workspaceLayout() === 'directory' && includeAllPaths() && state.snapshot === snapshot && directoryListing === listing) {
     renderWorkspace();
   }
 }
@@ -286,7 +303,7 @@ function directoryRows() {
   const root = folder(state.repo, '/');
   directoryFolders = new Map([[root.path, root]]);
   const files = new Map(state.files.map((file) => [file.path, file]));
-  if (showUnchanged && directoryListing?.snapshot === state.snapshot) {
+  if (includeAllPaths() && directoryListing?.snapshot === state.snapshot) {
     for (const path of directoryListing.paths || []) {
       if (!files.has(path)) files.set(path, {path, name: path.split('/').pop(), unchanged: true});
     }
@@ -340,10 +357,10 @@ function directoryRows() {
       data-action="folder" data-path="${path}" aria-expanded="${open}">
       ${guides}<span class="dir-name" ${indented}><span class="muted">${icon(open ? 'chevron' : 'right')}</span>
       <span class="dir-glyph">${icon('folder', 16)}</span><span class="mono ellipsis">${esc(item.name)}${depth ? '/' : ''}</span>
-      <span class="subtle">${count} ${count === 1 ? 'file' : 'files'}</span></span>
+      ${state.view ? '' : `<span class="subtle">${count} ${count === 1 ? 'file' : 'files'}</span>`}</span>
       ${count ? `<span class="compact">${counts(sum)}</span><span class="compact muted">${sum.blocks}</span>
         <span class="dir-highest ${band(sum.score)}">highest <b>${sum.score}</b></span>` : ''}
-    </button>${checkbox('Viewed: changed files in ' + (depth ? item.path.slice(1) : item.name), !count)}</div>` +
+    </button>${state.view ? '' : checkbox('Viewed: changed files in ' + (depth ? item.path.slice(1) : item.name), !count)}</div>` +
       (open ? children.map((child, i) => visit(child, depth + 1, depth ? [...parents, !last] : [], i === children.length - 1)).join('') : '');
   }
   return visit(root, 0, [], true);
@@ -367,7 +384,8 @@ function changeFolder(row, open, recursive = false) {
 
 function renderWorkspace(keepScroll = true) {
   const workspace = $('workspace');
-  workspace.setAttribute('aria-label', layout === 'directory' && showUnchanged ? 'Repository files' : 'Changed files');
+  const directory = workspaceLayout() === 'directory';
+  workspace.setAttribute('aria-label', directory && includeAllPaths() ? 'Repository files' : 'Changed files');
   const previous = workspace.querySelector('.directory-list');
   const active = document.activeElement;
   const activeEntry = active?.closest('.dir-entry');
@@ -378,25 +396,28 @@ function renderWorkspace(keepScroll = true) {
     canvas = null;
   }
   if (canvasView && canvasView.key !== canvasKey()) canvasView = null;
-  if (layout === 'directory') {
+  if (directory) {
     const rows = directoryRows();
-    const listing = showUnchanged && directoryListing?.snapshot === state.snapshot ? directoryListing : null;
-    const listingStatus = showUnchanged && state.snapshot && !state.error
+    const listing = includeAllPaths() && directoryListing?.snapshot === state.snapshot ? directoryListing : null;
+    const listingStatus = includeAllPaths() && state.snapshot && !state.error
       ? listing?.error || (listing?.truncated ? `Showing up to ${listing.limit.toLocaleString()} repository paths. All changed files are included.`
         : listing?.paths ? '' : 'Loading repository files…') : '';
+    const fileCount = listing?.paths?.length;
+    const title = state.view ? (fileCount === undefined ? '' : `${fileCount.toLocaleString()} ${fileCount === 1 ? 'file' : 'files'}`) : changedCount();
     workspace.innerHTML = `<div class="directory">
       <div class="directory-header">
-        <div class="directory-title"><div>Directory view</div><h1>${changedCount()}</h1></div>
-        <button type="button" class="pill surface directory-toggle" data-action="show-unchanged" aria-pressed="${showUnchanged}">
+        <div class="directory-title"><div>Directory view</div>${title ? `<h1>${title}</h1>` : ''}</div>
+        ${state.view ? '' : `<button type="button" class="pill surface directory-toggle" data-action="show-unchanged" aria-pressed="${showUnchanged}">
           Show unchanged files
-        </button>
+        </button>`}
       </div>
       ${listingStatus ? `<div class="directory-status muted" role="status">${esc(listingStatus)}</div>` : ''}
       <div class="directory-list panel">${rows ? `<div class="dir-cols dir-heading">
-        <span>Name</span><span>Lines</span><span>Blocks</span><span>Impact</span><span>Viewed</span></div>${rows}` : emptyMessage()}</div>
+        <span>Name</span>${state.view ? '' : '<span>Lines</span><span>Blocks</span><span>Impact</span><span>Viewed</span>'}</div>${rows}`
+        : state.view && listingStatus ? '' : emptyMessage()}</div>
     </div>`;
     if (keepScroll && previous) workspace.querySelector('.directory-list').scrollTop = previous.scrollTop;
-    if (active?.matches('.directory-toggle')) workspace.querySelector('.directory-toggle').focus({preventScroll: true});
+    if (active?.matches('.directory-toggle')) workspace.querySelector('.directory-toggle')?.focus({preventScroll: true});
     else if (activeEntry) {
       const {path, action} = activeEntry.querySelector('.dir-row').dataset;
       const row = directoryRow(path, action);
@@ -436,6 +457,12 @@ document.addEventListener('toggle', (event) => {
 
 function renderOverview() {
   const overview = $('overview');
+  overview.hidden = Boolean(state.view);
+  if (overview.hidden) {
+    overview.classList.remove('mobile-open');
+    overview.replaceChildren();
+    return;
+  }
   const previous = overview.querySelector('.overview-inner');
   const comparison = state.summaries.comparison || {};
   const task = state.comparison.task;
@@ -670,7 +697,7 @@ function refreshFileSummaries() {
   }
 }
 
-function renderUnchangedText(preview) {
+function renderPreviewText(preview) {
   const scroll = $('file-dialog').querySelector('.diff-scroll');
   if (!scroll) return;
   if (preview.text) {
@@ -689,44 +716,45 @@ function renderUnchangedText(preview) {
   }
 }
 
-function renderUnchangedFile(preview, scrollTop) {
+function renderPreview(preview, scrollTop) {
   const dialog = $('file-dialog');
-  const head = state.comparison.headLabel;
+  const ref = state.view?.label || state.comparison.headLabel;
   dialog.innerHTML = `
     <aside class="file-side panel" aria-label="File details">
       <button type="button" class="pill surface" data-action="back">${icon('back', 16)} Back to tree</button>
       <div><h2>${esc(preview.path.split('/').pop())}</h2><div class="file-path compact muted">${esc(preview.path)}</div></div>
-      <div class="subtle">Unchanged in this comparison</div>
+      ${state.view ? '' : '<div class="subtle">Unchanged in this comparison</div>'}
     </aside>
     <div class="diff-panel panel">
       <div class="diff-toolbar">
-        <span class="diff-range mono">${esc(head)}</span>
+        <span class="diff-range mono">${esc(ref)}</span>
         <span class="spacer"></span><span class="read-only">${icon('lock')} Read only</span>
       </div>
       <div class="diff-scroll" tabindex="0" aria-label="File contents"></div>
     </div>`;
-  renderUnchangedText(preview);
+  renderPreviewText(preview);
   dialog.querySelector('.diff-scroll').scrollTop = scrollTop;
 }
 
-async function loadUnchangedText(preview) {
+async function loadFilePreview(preview) {
   try {
-    const result = await post('lines', {snapshot: preview.snapshot, path: preview.path, full: true});
+    const request = {snapshot: preview.snapshot, path: preview.path};
+    const result = state.view ? await post('file', request) : await post('lines', {...request, full: true});
     preview.text = result.text;
   } catch (error) {
     preview.error = error.message;
   }
-  if (unchangedPreview === preview) renderUnchangedText(preview);
+  if (filePreview === preview) renderPreviewText(preview);
 }
 
 function renderFile(preserveScroll = false) {
   const dialog = $('file-dialog');
-  dialog.setAttribute('aria-label', unchangedPreview ? 'Unchanged file' : 'File changes');
+  dialog.setAttribute('aria-label', state.view ? 'File contents' : filePreview ? 'Unchanged file' : 'File changes');
   const file = selectedFile();
   const scrollTop = preserveScroll ? dialog.querySelector('.diff-scroll')?.scrollTop ?? 0 : 0;
-  dialog.hidden = !(file || unchangedPreview);
-  if (unchangedPreview) {
-    renderUnchangedFile(unchangedPreview, scrollTop);
+  dialog.hidden = !(file || filePreview);
+  if (filePreview) {
+    renderPreview(filePreview, scrollTop);
     return;
   }
   if (!file) {
@@ -801,7 +829,7 @@ function markFile() {
 
 function openFile(path, button) {
   selected = path;
-  unchangedPreview = button?.matches('.dir-row.unchanged') ? {path, snapshot: state.snapshot} : null;
+  filePreview = (state.view || button?.matches('.dir-row.unchanged')) ? {path, snapshot: state.snapshot} : null;
   if (button) lastFileButton = button;
   editing = false;
   saveMessage = '';
@@ -810,13 +838,13 @@ function openFile(path, button) {
   renderFile();
   markFile();
   $('file-dialog').querySelector('[data-action="back"]')?.focus({preventScroll: true});
-  if (unchangedPreview) loadUnchangedText(unchangedPreview);
+  if (filePreview) loadFilePreview(filePreview);
 }
 
 function closeFile() {
   const path = selected;
   selected = null;
-  unchangedPreview = null;
+  filePreview = null;
   editing = false;
   saveMessage = '';
   renderFile();
@@ -831,14 +859,16 @@ function pickerButton() {
 
 function openPicker(taskFocus = false) {
   if (draft) {
-    if (taskFocus) {
+    if (taskFocus && draft.mode === 'compare') {
       $('task-disclosure').open = true;
       $('task-summary').focus();
-    } else closePicker();
+    } else if (taskFocus) $('ref-search').focus();
+    else closePicker();
     return;
   }
-  const comparison = state.comparison;
-  draft = {base: comparison.base || 'HEAD', head: comparison.head || 'WORKTREE', pr: comparison.pr ?? null, side: 'base', tab: 'branches'};
+  const comparison = state.lastComparison || state.comparison;
+  draft = {base: comparison.base || 'HEAD', head: comparison.head || 'WORKTREE', pr: comparison.pr ?? null,
+    side: 'base', tab: state.view?.kind || 'branches', mode: state.view ? 'view' : 'compare', view: state.view};
   $('ref-search').value = '';
   $('task-summary').value = comparison.task || '';
   $('task-disclosure').open = taskFocus;
@@ -848,7 +878,7 @@ function openPicker(taskFocus = false) {
   $('picker').hidden = false;
   pickerButton().setAttribute('aria-expanded', 'true');
   renderPicker();
-  $(taskFocus ? 'task-summary' : 'ref-search').focus();
+  $(taskFocus && draft.mode === 'compare' ? 'task-summary' : 'ref-search').focus();
 }
 
 function closePicker(restoreFocus = true) {
@@ -862,7 +892,13 @@ function closePicker(restoreFocus = true) {
 
 function pickerItems(kind) {
   const items = state.refs[kind] || [];
-  if (kind === 'branches' && draft.side === 'head') {
+  if (draft.mode === 'view' && kind === 'commits') {
+    const hash = $('ref-search').value.trim().toLowerCase();
+    if (/^[a-f0-9]{4,64}$/.test(hash) && !items.some((item) => item.value.startsWith(hash))) {
+      return [{value: hash, label: hash, note: 'Commit hash'}, ...items];
+    }
+  }
+  if (draft.mode === 'compare' && kind === 'branches' && draft.side === 'head') {
     return [{value: 'WORKTREE', label: 'Working tree', note: 'Uncommitted changes'}, ...items];
   }
   return items;
@@ -870,20 +906,35 @@ function pickerItems(kind) {
 
 function renderPicker() {
   if (!draft) return;
+  const viewing = draft.mode === 'view';
+  for (const button of $('picker-mode').children) {
+    button.setAttribute('aria-pressed', String(button.dataset.mode === draft.mode));
+  }
+  $('picker-sides').hidden = $('task-disclosure').hidden = viewing;
+  $('pick-view').hidden = !viewing;
+  $('pick-view').textContent = draft.view?.label || 'Choose a reference';
+  const searchLabel = viewing ? 'Search commits, branches, origins and worktrees' : 'Search commits, branches, origins, worktrees and PRs';
+  $('ref-search-label').textContent = searchLabel;
+  const submit = $('picker').querySelector('[data-action="compare"]');
+  submit.textContent = viewing ? 'View' : 'Compare';
+  submit.disabled = busy || (viewing && !draft.view);
   $('pick-base').textContent = refLabel(draft.base, 'base');
   $('pick-head').textContent = refLabel(draft.head, 'head');
   for (const side of ['base', 'head']) {
     $('picker').querySelector(`[data-action="${side}"]`).setAttribute('aria-pressed', String(side === draft.side));
   }
   const currentPr = (state.refs.prs || []).find((item) => item.value === draft.pr);
-  $('pr-link').hidden = !currentPr;
+  $('pr-link').hidden = viewing || !currentPr;
   if (currentPr) $('pr-label').textContent = currentPr.label;
   const tabList = $('picker-tabs');
   if (!tabList.firstElementChild) {
     tabList.innerHTML = Object.entries(tabs).map(([key, name]) =>
       `<button type="button" data-action="tab" data-tab="${key}">${name}</button>`).join('');
   }
-  for (const button of tabList.children) button.setAttribute('aria-pressed', String(button.dataset.tab === draft.tab));
+  for (const button of tabList.children) {
+    button.hidden = viewing && button.dataset.tab === 'prs';
+    button.setAttribute('aria-pressed', String(button.dataset.tab === draft.tab));
+  }
   renderPickerResults();
   renderHeader();
 }
@@ -893,7 +944,8 @@ function renderPickerResults() {
   const results = $('ref-results');
   const query = $('ref-search').value.trim();
   const lower = query.toLowerCase();
-  const kinds = query ? Object.keys(tabs) : [draft.tab];
+  const viewing = draft.mode === 'view';
+  const kinds = query ? Object.keys(tabs).filter((kind) => !viewing || kind !== 'prs') : [draft.tab];
   const matches = kinds.flatMap((kind) => pickerItems(kind).map((item, index) => ({item, kind, index})))
     .filter(({item, kind}) => `${item.label} ${item.note} ${item.path || ''} ${item.value} ${tabs[kind]}`.toLowerCase().includes(lower));
   if (!matches.length) {
@@ -906,12 +958,14 @@ function renderPickerResults() {
   const key = focused?.dataset.action === 'ref' ? [focused.dataset.kind, focused.dataset.index] : null;
   const scroll = results.scrollTop;
   results.innerHTML = matches.map(({item, kind, index}) => {
-    const value = kind === 'worktrees' && draft.side === 'base' ? item.commit : item.value;
-    const on = kind === 'prs' ? draft.pr === item.value : draft[draft.side] === value;
+    const useWorktreeHead = !viewing && kind === 'worktrees' && draft.side === 'base';
+    const value = useWorktreeHead ? item.commit : item.value;
+    const on = viewing ? draft.view?.kind === kind && draft.view.ref === value :
+      kind === 'prs' ? draft.pr === item.value : draft[draft.side] === value;
     return `<button type="button" data-action="ref" data-kind="${kind}" data-index="${index}" aria-pressed="${on}">
       ${query ? `<span class="kind">${tabs[kind]}</span>` : ''}
       <span class="ref-name">${esc(item.label)}</span><span class="note-text">${esc(item.note)}
-      ${kind === 'worktrees' && draft.side === 'base' ? ' · Uses this worktree’s HEAD' : ''}</span>
+      ${useWorktreeHead ? ' · Uses this worktree’s HEAD' : ''}</span>
       ${kind === 'prs' ? '<span class="sets-both">sets both sides</span>' : ''}
     </button>`;
   }).join('');
@@ -922,7 +976,9 @@ function renderPickerResults() {
 function selectRef(kind, index) {
   const item = pickerItems(kind)[index];
   if (!item) return;
-  if (kind === 'prs') {
+  if (draft.mode === 'view') {
+    draft.view = {kind, ref: item.value, label: item.label};
+  } else if (kind === 'prs') {
     Object.assign(draft, {base: item.base, head: item.head, pr: item.value});
   } else {
     draft.pr = null;
@@ -949,8 +1005,8 @@ function applyState(next, keepScroll = true) {
     canvasView = null;
   }
   state = next;
-  if (unchangedPreview?.snapshot !== state.snapshot || !selected) unchangedPreview = null;
-  if (selected && !selectedFile() && !unchangedPreview) selected = null;
+  if (filePreview?.snapshot !== state.snapshot || !selected) filePreview = null;
+  if (selected && !selectedFile() && !filePreview) selected = null;
   renderHeader();
   renderWorkspace(keepScroll);
   renderOverview();
@@ -960,16 +1016,19 @@ function applyState(next, keepScroll = true) {
   if (typeof renderChat === 'function') renderChat();
 }
 
-async function submitComparison() {
+async function submitPicker() {
   if (busy || !draft) return;
+  const viewing = draft.mode === 'view';
+  if (viewing && !draft.view) return;
   busy = true;
   const button = $('picker').querySelector('[data-action="compare"]');
   const status = $('picker-status');
   button.disabled = true;
   status.classList.remove('error');
-  status.textContent = 'Analyzing comparison…';
+  status.textContent = viewing ? 'Opening reference…' : 'Analyzing comparison…';
   try {
-    const result = await post('compare', {base: draft.base, head: draft.head, pr: draft.pr, task: $('task-summary').value});
+    const result = viewing ? await post('view', draft.view) :
+      await post('compare', {base: draft.base, head: draft.head, pr: draft.pr, task: $('task-summary').value});
     closePicker();
     selected = null;
     editing = false;
@@ -1132,6 +1191,12 @@ document.addEventListener('click', (event) => {
       draft.side = action;
       renderPicker();
       break;
+    case 'picker-mode':
+      draft.mode = button.dataset.mode;
+      if (draft.mode === 'view' && draft.tab === 'prs') draft.tab = 'branches';
+      $('picker-status').textContent = '';
+      renderPicker();
+      break;
     case 'tab':
       draft.tab = button.dataset.tab;
       renderPicker();
@@ -1145,7 +1210,7 @@ document.addEventListener('click', (event) => {
       $('pick-head').parentElement.focus();
       break;
     case 'compare':
-      submitComparison();
+      submitPicker();
       break;
   }
 });

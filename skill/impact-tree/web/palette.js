@@ -84,7 +84,7 @@ const {toggleCommandPalette, commandPaletteKeys} = (() => {
 
   function openComparison(task, origin) {
     if (draft) {
-      if (task) openPicker(true);
+      if (task && draft.mode === 'compare') openPicker(true);
       else $('ref-search').focus();
       return;
     }
@@ -195,8 +195,8 @@ const {toggleCommandPalette, commandPaletteKeys} = (() => {
     };
 
     return [
-      command('compare', 'Choose what to compare…', (origin) => openComparison(false, origin), '/'),
-      command('task', 'Edit task summary…', (origin) => openComparison(true, origin)),
+      command('compare', 'Choose references…', (origin) => openComparison(false, origin), '/'),
+      !state.view && command('task', 'Edit task summary…', (origin) => openComparison(true, origin)),
       !selected && buttonCommand('impact', 'Impact view', document.querySelector('.layout-toggle [data-action="impact"]'), '1'),
       !selected && buttonCommand('directory', 'Directory view', document.querySelector('.layout-toggle [data-action="directory"]'), '2'),
       !selected && canvas && buttonCommand('links', `${links ? 'Hide' : 'Show'} all dependencies`,
@@ -205,7 +205,7 @@ const {toggleCommandPalette, commandPaletteKeys} = (() => {
       treeCommand('in', 'Zoom in', '+'),
       treeCommand('out', 'Zoom out', '−'),
       treeCommand('reset', 'Reset layout'),
-      !editing && command('overview', 'Go to overview', overviewTarget, 'o'),
+      !state.view && !editing && command('overview', 'Go to overview', overviewTarget, 'o'),
       fileCommand('next', 'Next file', 'n'),
       fileCommand('previous', 'Previous file', 'p'),
       !editing && unviewed && command('unviewed', 'Next unviewed file', (origin) => openChangedFile(unviewed, origin)),
@@ -223,10 +223,10 @@ const {toggleCommandPalette, commandPaletteKeys} = (() => {
       fileCommand('edit', 'Edit file', 'e'),
       file && command('copy', 'Copy file path', () => copyPath(file.path)),
       fileCommand('back', 'Back to tree', 'b / Esc'),
-      globalThis.changeChat && command('chat', changeChat.isOpen() ? 'Focus change chat' : 'Open change chat', () => changeChat.open(), 'c / Ctrl J'),
-      globalThis.changeChat && command('chat-full', changeChat.isFull() ? 'Normal size chat' : 'Full size chat', () => changeChat.toggleFull(), 'Ctrl ⇧ Enter'),
+      !state.view && globalThis.changeChat && command('chat', changeChat.isOpen() ? 'Focus change chat' : 'Open change chat', () => changeChat.open(), 'c / Ctrl J'),
+      !state.view && globalThis.changeChat && command('chat-full', changeChat.isFull() ? 'Normal size chat' : 'Full size chat', () => changeChat.toggleFull(), 'Ctrl ⇧ Enter'),
       globalThis.changeChat && (state.chat || []).length && command('chat-clear', 'Clear change chat', () => { changeChat.open(); changeChat.clear(); }),
-      command('settings', 'Summary agent settings…', () => agentPanel.hidden ? openAgentSettings() : $('agent-model').focus()),
+      !state.view && command('settings', 'Summary agent settings…', () => agentPanel.hidden ? openAgentSettings() : $('agent-model').focus()),
       command('shortcuts', 'Keyboard shortcuts', () => help.hidden ? openHelp() : help.querySelector('button').focus(), '?'),
     ].filter(Boolean);
   }

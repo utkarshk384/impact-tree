@@ -252,7 +252,7 @@ class Jobs:
         with self.condition:
             current = self.state.result
             snapshot = current["snapshot"]
-            if self.closed or not snapshot or current["error"]:
+            if self.closed or not snapshot or current["error"] or current.get("view"):
                 raise EditError("Open a comparison to use chat.", 409)
             if body.get("snapshot", snapshot) != snapshot:
                 raise EditError(CHANGED, 409)
