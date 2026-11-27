@@ -84,7 +84,8 @@ const {toggleCommandPalette, commandPaletteKeys} = (() => {
 
   function openComparison(task, origin) {
     if (draft) {
-      $(task ? 'task-summary' : 'ref-search').focus();
+      if (task) openPicker(true);
+      else $('ref-search').focus();
       return;
     }
     pickerReturn = origin;

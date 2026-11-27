@@ -17,18 +17,20 @@
 </head>
 <body>
   <header class="header">
-    <div class="brand">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 12h7M10 12c4 0 3-7 8-7M10 12c4 0 3 7 8 7"></path><circle cx="20" cy="5" r="1.6"></circle><circle cx="20" cy="19" r="1.6"></circle></svg>
-      <span>Impact Tree</span>
-      <span class="repo-name" id="repo-name"></span>
-      <span class="tip" id="impact-tip">
-        <button type="button" class="info" data-icon="info" aria-label="How impact is calculated" aria-describedby="impact-help"></button>
-        <span class="tipbox impact-help" role="tooltip" id="impact-help"></span>
-      </span>
-    </div>
-    <div class="segmented layout-toggle" role="group" aria-label="Layout">
-      <button type="button" data-action="impact" aria-pressed="true"><span data-icon="tree"></span>Impact</button>
-      <button type="button" data-action="directory" aria-pressed="false"><span data-icon="folder"></span>Directory</button>
+    <div class="header-start">
+      <div class="brand">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 12h7M10 12c4 0 3-7 8-7M10 12c4 0 3 7 8 7"></path><circle cx="20" cy="5" r="1.6"></circle><circle cx="20" cy="19" r="1.6"></circle></svg>
+        <span class="brand-name">Impact Tree</span>
+        <span class="repo-name" id="repo-name"></span>
+        <span class="tip" id="impact-tip">
+          <button type="button" class="info" data-icon="info" aria-label="How impact is calculated" aria-describedby="impact-help"></button>
+          <span class="tipbox impact-help" role="tooltip" id="impact-help"></span>
+        </span>
+      </div>
+      <div class="segmented layout-toggle" role="group" aria-label="Layout">
+        <button type="button" data-action="impact" aria-pressed="true"><span data-icon="tree"></span><span class="layout-label">Impact</span></button>
+        <button type="button" data-action="directory" aria-pressed="false"><span data-icon="folder"></span><span class="layout-label">Directory</span></button>
+      </div>
     </div>
     <button type="button" class="range-button" data-action="picker" aria-expanded="false" aria-controls="picker" aria-keyshortcuts="/" title="Choose what to compare (/)">
       <span class="muted">Base</span><span class="ref-label" id="base-label">HEAD</span>
@@ -36,11 +38,12 @@
       <span class="muted">Compare</span><span class="ref-label" id="head-label">Working tree</span>
       <span data-icon="chevron"></span>
     </button>
-    <span class="spacer"></span>
-    <button type="button" class="pill links-button" data-action="links" aria-pressed="true"><span data-icon="links"></span>All dependencies</button>
-    <button type="button" class="pill agent-button" id="agent-button" aria-expanded="false" aria-controls="agent-settings" title="Model and effort of the summary sub-agent">
-      <span class="ai-dot" aria-hidden="true"></span><span id="agent-label">Summary agent</span></button>
-    <button type="button" class="pill overview-button" data-action="overview">Overview</button>
+    <div class="header-actions">
+      <button type="button" class="pill links-button" data-action="links" aria-pressed="true" title="All dependencies"><span data-icon="links"></span><span class="links-label">All dependencies</span></button>
+      <button type="button" class="pill agent-button" id="agent-button" aria-expanded="false" aria-controls="agent-settings" title="Model and effort of the summary sub-agent">
+        <span class="ai-dot" aria-hidden="true"></span><span id="agent-label">Summary agent</span></button>
+      <button type="button" class="pill overview-button" data-action="overview">Overview</button>
+    </div>
   </header>
 
   <section class="agent-settings" id="agent-settings" role="dialog" aria-labelledby="agent-settings-title" hidden>
@@ -63,7 +66,7 @@
 
   <section class="picker" id="picker" role="dialog" aria-label="Choose what to compare" hidden>
     <div class="pr-link" id="pr-link" hidden>
-      <span data-icon="pull"></span><span class="spacer">Linked to <b id="pr-label"></b>. Branches were set from the PR. Changing either side unlinks it.</span>
+      <span data-icon="pull"></span><span class="spacer">Linked to <b id="pr-label"></b>. Changing either side unlinks it.</span>
       <button class="pill" type="button" data-action="unlink">Unlink</button>
     </div>
     <div class="picker-sides">
@@ -74,14 +77,17 @@
     <div class="search">
       <span data-icon="search"></span>
       <label for="ref-search" class="sr-only">Search commits, branches, origins, worktrees and PRs</label>
-      <input id="ref-search" type="search" placeholder="Search commits, branches, origins, worktrees and PRs" autocomplete="off">
+      <input id="ref-search" type="search" placeholder="Search refs" autocomplete="off">
     </div>
     <div class="ref-results" id="ref-results"></div>
-    <div class="task-input">
-      <label for="task-summary">Task summary <span class="muted">· optional</span></label>
-      <textarea id="task-summary" rows="3" maxlength="10000" placeholder="What were these changes meant to do? For example: move every product section onto one shared tab window."></textarea>
-      <span>The AI summaries will say how each change relates to this task and point out changes that seem unrelated.</span>
-    </div>
+    <details class="task-disclosure" id="task-disclosure">
+      <summary id="task-toggle">Add task summary</summary>
+      <div class="task-input">
+        <label for="task-summary" class="sr-only">Task summary (optional)</label>
+        <textarea id="task-summary" rows="3" maxlength="10000" placeholder="What were these changes meant to do?" aria-describedby="task-summary-help"></textarea>
+        <span id="task-summary-help">AI summaries will explain how changes relate to the task and flag unrelated changes.</span>
+      </div>
+    </details>
     <div class="picker-footer">
       <span id="picker-status" role="status"></span>
       <button type="button" class="pill primary" data-action="compare">Compare</button>

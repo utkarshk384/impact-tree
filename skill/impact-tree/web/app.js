@@ -831,14 +831,18 @@ function pickerButton() {
 
 function openPicker(taskFocus = false) {
   if (draft) {
-    if (taskFocus) $('task-summary').focus();
-    else closePicker();
+    if (taskFocus) {
+      $('task-disclosure').open = true;
+      $('task-summary').focus();
+    } else closePicker();
     return;
   }
   const comparison = state.comparison;
   draft = {base: comparison.base || 'HEAD', head: comparison.head || 'WORKTREE', pr: comparison.pr ?? null, side: 'base', tab: 'branches'};
   $('ref-search').value = '';
   $('task-summary').value = comparison.task || '';
+  $('task-disclosure').open = taskFocus;
+  $('task-toggle').textContent = comparison.task?.trim() ? 'Task summary' : 'Add task summary';
   $('picker-status').textContent = '';
   $('picker-status').classList.remove('error');
   $('picker').hidden = false;
@@ -893,9 +897,9 @@ function renderPickerResults() {
   const matches = kinds.flatMap((kind) => pickerItems(kind).map((item, index) => ({item, kind, index})))
     .filter(({item, kind}) => `${item.label} ${item.note} ${item.path || ''} ${item.value} ${tabs[kind]}`.toLowerCase().includes(lower));
   if (!matches.length) {
-    const message = query ? `Nothing matches “${query}”. Try a commit hash, branch name or PR title.` :
+    const message = query ? 'No matching refs.' :
       !state.refsReady ? 'Loading references…' : draft.tab === 'prs' ? state.refs.prNote : 'No references in this tab.';
-    results.innerHTML = `<div class="no-refs">${esc(message)}</div>`;
+    results.innerHTML = `<p class="no-refs" role="status">${esc(message)}</p>`;
     return;
   }
   const focused = document.activeElement;
@@ -1157,6 +1161,9 @@ document.addEventListener('keydown', (event) => {
   }
 });
 $('ref-search').addEventListener('input', renderPickerResults);
+$('task-summary').addEventListener('input', (event) => {
+  $('task-toggle').textContent = event.target.value.trim() ? 'Task summary' : 'Add task summary';
+});
 
 async function loadState() {
   try {
