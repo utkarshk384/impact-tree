@@ -81,6 +81,7 @@ const renderChat = (() => {
   }
 
   function open() {
+    if (state.view) return;
     if (panel.hidden) {
       returnFocus = document.activeElement;
       captureContext();
@@ -335,6 +336,8 @@ const renderChat = (() => {
   }
 
   function render() {
+    launcher.hidden = Boolean(state.view);
+    if (state.view && !panel.hidden) close();
     const switched = snapshot !== state.snapshot;
     if (switched || !changedFiles) {
       snapshot = state.snapshot;
@@ -377,7 +380,7 @@ const renderChat = (() => {
   }
 
   function renderControls() {
-    const ready = Boolean(state.snapshot && !state.loading && !state.error);
+    const ready = Boolean(state.snapshot && !state.loading && !state.error && !state.view);
     clear.disabled = !ready || requestPending || !state.chat?.length;
     send.disabled = !ready || requestPending || !input.value.trim();
     for (const retry of thread.querySelectorAll('.chat-retry')) retry.disabled = requestPending;
@@ -388,7 +391,7 @@ const renderChat = (() => {
   }
 
   async function chatRequest(action, data) {
-    if (requestPending || state.loading || !state.snapshot || state.error) return false;
+    if (requestPending || state.loading || !state.snapshot || state.error || state.view) return false;
     const requestSnapshot = state.snapshot;
     requestPending = true;
     requestError = '';
@@ -448,7 +451,7 @@ const renderChat = (() => {
   }).observe($('file-dialog'), {childList: true});
 
   window.addEventListener('keydown', (event) => {
-    if (event.defaultPrevented || event.isComposing || draft
+    if (event.defaultPrevented || event.isComposing || draft || state.view
         || document.querySelector('.shortcuts:not([hidden]), #command-palette[open]')) return;
     const command = (event.ctrlKey || event.metaKey) && !event.altKey;
     // Ctrl J / Cmd J works everywhere: open the chat, move focus to it, or close it when it has focus.

@@ -48,12 +48,13 @@ def preflight(path):
     return repo_root(path)
 
 
-def commit(root, ref):
-    return decode(git(root, "rev-parse", "--verify", "--end-of-options", f"{ref}^{{commit}}")).strip()
+def commit(root, ref, *, timeout=None):
+    return decode(git(root, "rev-parse", "--verify", "--end-of-options",
+                      f"{ref}^{{commit}}", timeout=timeout)).strip()
 
 
-def worktrees(root):
-    raw = git(root, "worktree", "list", "--porcelain", "-z")
+def worktrees(root, *, timeout=None):
+    raw = git(root, "worktree", "list", "--porcelain", "-z", timeout=timeout)
     result = []
     for entry in raw.split(b"\0\0"):
         fields = {}
@@ -72,6 +73,28 @@ def worktrees(root):
             "note": "This checkout, with its uncommitted changes" if is_current else str(path),
         })
     return result
+
+
+def browse_target(root, kind, ref):
+    if kind == "worktrees":
+        entry = next((item for item in worktrees(root, timeout=15) if item["value"] == ref), None)
+        if not entry:
+            raise ChangeTreeError("Choose a worktree of this repository.")
+        return {"kind": kind, "ref": ref, "label": entry["label"], "target": entry["path"]}
+
+    revision = ref
+    if kind == "commits":
+        if not re.fullmatch(r"[a-fA-F0-9]{4,64}", ref):
+            raise ChangeTreeError("Choose a commit by its hash.")
+    elif kind != "branches" or ref != "HEAD":
+        namespace = "heads" if kind == "branches" else "remotes"
+        revision = f"refs/{namespace}/{ref}"
+        git(root, "check-ref-format", revision, timeout=15)
+    sha = commit(root, revision, timeout=15)
+    if kind == "commits":
+        return {"kind": kind, "ref": sha, "label": sha[:12], "commit": sha}
+    label = f"HEAD · {sha[:7]}" if ref == "HEAD" else ref
+    return {"kind": kind, "ref": ref, "label": label, "commit": sha}
 
 
 WORKTREE_PATH_PREFIXES = tuple(

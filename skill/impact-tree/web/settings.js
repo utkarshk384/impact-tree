@@ -98,6 +98,7 @@ receiveUpdate = (update) => {
 const previousApply = applyState;
 applyState = (...args) => {
   previousApply(...args);
+  if (state.view) closeAgentSettings(false);
   renderAgentButton();
 };
 renderAgentButton();

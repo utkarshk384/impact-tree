@@ -30,10 +30,11 @@
       <button type="button" data-action="impact" aria-pressed="true"><span data-icon="tree"></span>Impact</button>
       <button type="button" data-action="directory" aria-pressed="false"><span data-icon="folder"></span>Directory</button>
     </div>
-    <button type="button" class="range-button" data-action="picker" aria-expanded="false" aria-controls="picker" aria-keyshortcuts="/" title="Choose what to compare (/)">
-      <span class="muted">Base</span><span class="ref-label" id="base-label">HEAD</span>
-      <span data-icon="arrow"></span>
-      <span class="muted">Compare</span><span class="ref-label" id="head-label">Working tree</span>
+    <button type="button" class="range-button" data-action="picker" aria-expanded="false" aria-controls="picker" aria-keyshortcuts="/" title="Choose references (/)">
+      <span class="muted" data-compare-range>Base</span><span class="ref-label" id="base-label" data-compare-range>HEAD</span>
+      <span data-icon="arrow" data-compare-range></span>
+      <span class="muted" data-compare-range>Compare</span><span class="ref-label" id="head-label" data-compare-range>Working tree</span>
+      <span data-view-range hidden>Viewing</span><span class="ref-label" id="view-label" data-view-range hidden></span>
       <span data-icon="chevron"></span>
     </button>
     <span class="spacer"></span>
@@ -61,23 +62,28 @@
 
   <section class="file-dialog" id="file-dialog" role="dialog" aria-label="File changes" hidden></section>
 
-  <section class="picker" id="picker" role="dialog" aria-label="Choose what to compare" hidden>
+  <section class="picker" id="picker" role="dialog" aria-label="Choose references" hidden>
+    <div class="segmented" role="group" aria-label="Picker mode" id="picker-mode">
+      <button type="button" data-action="picker-mode" data-mode="compare" aria-pressed="true">Compare</button>
+      <button type="button" data-action="picker-mode" data-mode="view" aria-pressed="false">View files</button>
+    </div>
     <div class="pr-link" id="pr-link" hidden>
       <span data-icon="pull"></span><span class="spacer">Linked to <b id="pr-label"></b>. Branches were set from the PR. Changing either side unlinks it.</span>
       <button class="pill" type="button" data-action="unlink">Unlink</button>
     </div>
-    <div class="picker-sides">
+    <div class="picker-sides" id="picker-sides">
       <button type="button" data-action="base" aria-pressed="true"><span>Base (before)</span><b id="pick-base"></b></button>
       <button type="button" data-action="head" aria-pressed="false"><span>Compare (after)</span><b id="pick-head"></b></button>
     </div>
+    <div class="mono" id="pick-view" aria-live="polite" hidden></div>
     <div class="segmented picker-tabs" role="group" aria-label="Reference type" id="picker-tabs"></div>
     <div class="search">
       <span data-icon="search"></span>
-      <label for="ref-search" class="sr-only">Search commits, branches, origins, worktrees and PRs</label>
+      <label for="ref-search" id="ref-search-label" class="sr-only">Search commits, branches, origins, worktrees and PRs</label>
       <input id="ref-search" type="search" placeholder="Search commits, branches, origins, worktrees and PRs" autocomplete="off">
     </div>
     <div class="ref-results" id="ref-results"></div>
-    <div class="task-input">
+    <div class="task-input" id="task-input">
       <label for="task-summary">Task summary <span class="muted">· optional</span></label>
       <textarea id="task-summary" rows="3" maxlength="10000" placeholder="What were these changes meant to do? For example: move every product section onto one shared tab window."></textarea>
       <span>The AI summaries will say how each change relates to this task and point out changes that seem unrelated.</span>
